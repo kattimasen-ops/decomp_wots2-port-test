@@ -1,9 +1,233 @@
+name: Build WOTS2 for RK3326
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build host (aarch64) for M9 Pro / RK3326
+    runs-on: ubuntu-22.04
+    container: ubuntu:20.04
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+
+    env:
+      SYSROOT_LIB: ${{ github.workspace }}/sysroot
+      SDL2_INSTALL: ${{ github.workspace }}/sdl2-install
+      DEBIAN_FRONTEND: noninteractive
+      PKG_CONFIG_PATH: ${{ github.workspace }}/sysroot/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
+      JOBS: "4"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory "*" || true
+
+      # ── MULTIARCH ───────────────────────────────────────────────────
+      - name: aarch64 Multiarch aktivieren
+        run: |
+          dpkg --add-architecture arm64
+          cp /etc/apt/sources.list /etc/apt/sources.list.bak
+          sed -i -E 's/^deb (\[[^]]*\] )?http/deb [arch=amd64] http/' /etc/apt/sources.list
+          printf '%s\n' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main universe' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main universe' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main universe' \
+            > /etc/apt/sources.list.d/arm64.list
+          apt-get update
+
+      # ── CMAKE 3.28.3 ────────────────────────────────────────────────
+      - name: CMake 3.28.3 installieren
+        run: |
+          apt-get install -y --no-install-recommends wget ca-certificates
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz
+          tar -xzf cmake-3.28.3-linux-x86_64.tar.gz -C /opt
+          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/cmake  /usr/local/bin/cmake
+          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/ctest  /usr/local/bin/ctest
+          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/cpack  /usr/local/bin/cpack
+          rm cmake-3.28.3-linux-x86_64.tar.gz
+          cmake --version
+
+      # ── NATIVE TOOLS ────────────────────────────────────────────────
+      - name: Native Build-Tools installieren
+        run: |
+          apt-get install -y --no-install-recommends \
+            build-essential ninja-build git curl wget ca-certificates \
+            pkg-config python3 python3-pip file patchelf \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            unzip p7zip-full bsdtar zstd xz-utils
+
+      # ── AARCH64 DEV-PAKETE ──────────────────────────────────────────
+      - name: aarch64 Dev-Pakete installieren
+        run: |
+          apt-get install -y --no-install-recommends \
+            libdrm-dev:arm64 \
+            libgbm-dev:arm64 \
+            libegl-dev:arm64 \
+            libgles2-mesa-dev:arm64 \
+            libasound2-dev:arm64 \
+            libudev-dev:arm64 \
+            libarchive-dev:arm64 \
+            zlib1g-dev:arm64 \
+            libbz2-dev:arm64 \
+            liblzma-dev:arm64 \
+            libzstd-dev:arm64 \
+            liblz4-dev:arm64 \
+            libwayland-dev:arm64 \
+            libpulse-dev:arm64 \
+            libxkbcommon-dev:arm64
+
+      # ── CROSS-SYSROOT ───────────────────────────────────────────────
+      - name: Cross-Sysroot einrichten
+        run: bash scripts/ci-setup-sysroot.sh
+
+      # ── SDL2 MIT KMSDRM-PAGEFLIP-PATCH ──────────────────────────────
+      - name: SDL2 mit KMSDRM-Pageflip-Patch bauen
+        run: bash scripts/ci-build-sdl2.sh
+
+      # ── STUBS (libmali, libdecor) ───────────────────────────────────
+      - name: Stubs (libmali, libdecor)
+        run: bash scripts/ci-build-stubs.sh
+
+      # ── PATCHES (KRITISCH — Reihenfolge einhalten) ──────────────────
       - name: Patches anwenden
         run: |
-          python3 patches/wots2-gles.py           src/hal/gs.cpp
-          python3 patches/wots2-gles-precision.py src/hal/gs.cpp
-          python3 patches/wots2-neon.py           src/hal/gs.cpp
-          python3 patches/wots2-persistent-buffers.py src/hal/gs.cpp
-          python3 patches/wots2-collision-neon.py src/game/collision_world.cpp
+          set -euo pipefail
+
+          echo "== gs.cpp: GLES 3.2 Shader + precision =="
+          python3 patches/wots2-gles.py                src/hal/gs.cpp
+          python3 patches/wots2-gles-precision.py      src/hal/gs.cpp
+
+          echo "== gs.cpp: NEON Vertex-Lerp + Frustum-Culling =="
+          python3 patches/wots2-neon.py                src/hal/gs.cpp
+
+          echo "== gs.cpp: opt-in persistente Buffer =="
+          python3 patches/wots2-persistent-buffers.py  src/hal/gs.cpp
+
+          echo "== collision_world.cpp: NEON Apply + DistanceSquared =="
+          python3 patches/wots2-collision-neon.py      src/game/collision_world.cpp
+
+          echo "== SDL2 KMSDRM Pageflip-Patch (im SDL2-Baum) =="
+          if [ -f patches/sdl2-pageflip.py ]; then
+            python3 patches/sdl2-pageflip.py "$SDL2_INSTALL/.." || true
+          fi
+
+          echo "== port_config.c: RK3326-Defaults =="
           python3 patch_config_defaults.py .
-          python3 patch_config_changes.py  .
+
+          echo "== port_config.c + hud_hires.c: config_changes() =="
+          python3 patch_config_changes.py .
+
+          echo "== Alle Patches angewendet =="
+
+      # ── CMake konfigurieren ─────────────────────────────────────────
+      - name: CMake konfigurieren
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/aarch64-arkos.cmake" \
+            -DSDL2_INSTALL_DIR="$SDL2_INSTALL" \
+            -DWOTS2_GLES=ON \
+            -DSDL2_DIR="$SDL2_INSTALL/lib/cmake/SDL2" \
+            -DCMAKE_PREFIX_PATH="$SDL2_INSTALL;$SYSROOT_LIB" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBUILD_SHARED_LIBS=OFF
+
+      # ── BAUEN ───────────────────────────────────────────────────────
+      - name: Bauen
+        run: cmake --build build -j "$JOBS"
+
+      # ── LAUNCHER-DATEIEN INS BUILD-STAGING ──────────────────────────
+      - name: Launcher-Dateien bereitstellen
+        run: |
+          set -euo pipefail
+          STAGE="$GITHUB_WORKSPACE/stage"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/wots2/libs.aarch64" "$STAGE/wots2/extracted"
+
+          # Binary
+          install -m 755 build/wots2 "$STAGE/wots2/wots2"
+
+          # Config + Launcher
+          install -m 644 port.ini        "$STAGE/wots2/port.ini"      || true
+          install -m 755 WOTS2.sh        "$STAGE/WOTS2.sh"
+          install -m 755 sdl_mapping.py  "$STAGE/wots2/sdl_mapping.py" || true
+
+          # README falls vorhanden
+          [ -f README.md ] && install -m 644 README.md "$STAGE/README.md" || true
+
+          # Shared libraries (falls dynamisch erzeugt)
+          if [ -d build/libs.aarch64 ]; then
+            cp -a build/libs.aarch64/*.so* "$STAGE/wots2/libs.aarch64/" 2>/dev/null || true
+          fi
+
+          echo "== Staging-Inhalt =="
+          find "$STAGE" -maxdepth 3 -printf '  %M %s  %p\n'
+
+      # ── BUNDLE ──────────────────────────────────────────────────────
+      - name: Bundle bauen
+        run: |
+          set -euo pipefail
+          DIST="dist"
+          rm -rf "$DIST"
+          mkdir -p "$DIST"
+
+          # Umbenennen in Release-Name
+          cp -a stage/wots2 "$DIST/wots2"
+          cp -a stage/WOTS2.sh "$DIST/WOTS2.sh"
+          [ -f stage/README.md ] && cp -a stage/README.md "$DIST/README.md" || true
+
+          # Rechte
+          find "$DIST" -type d -exec chmod 755 {} \;
+          find "$DIST" -type f -exec chmod 644 {} \;
+          chmod 755 "$DIST/WOTS2.sh" "$DIST/wots2/wots2"
+          [ -f "$DIST/wots2/sdl_mapping.py" ] && chmod 755 "$DIST/wots2/sdl_mapping.py" || true
+
+          # Tarball
+          ( cd "$DIST" && tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh README.md 2>/dev/null || \
+                       tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh )
+
+          echo "== dist =="
+          ls -la "$DIST"
+          echo "== tar =="
+          tar -tzf "$DIST/wots2-rk3326.tar.gz" | head -50
+
+      # ── ARTEFAKT ────────────────────────────────────────────────────
+      - name: Upload Artefakt (Bundle)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wots2-rk3326
+          path: |
+            dist/wots2-rk3326.tar.gz
+            dist/WOTS2.sh
+            dist/wots2/
+          retention-days: 30
+
+      # ── FEHLERANALYSE (immer) ───────────────────────────────────────
+      - name: Fehleranalyse
+        if: always()
+        run: bash scripts/ci-error-report.sh || true
+
+      - name: Upload Fehleranalyse
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-analysis
+          path: build-error-analysis.txt
+          if-no-files-found: warn
+          retention-days: 30
