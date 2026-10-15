@@ -11,28 +11,22 @@ if(WIN32)
     add_compile_definitions(GetThreadId=Ps2_GetThreadId)
 endif()
 
-# ── OpenGL ES 3.2 für Mali-G31 (RK3326) ──────────────────────────────────────
-# Ohne WOTS2_GLES wird Desktop-OpenGL 3.3 gebaut (Standard für x86_64).
-# Mit WOTS2_GLES=ON wird gegen EGL + GLESv2 gelinkt und ImGui auf das
-# OpenGL-ES-3-Backend umgestellt. Das ist der Pfad für den M9 Pro.
+# ── OpenGL ES 3.2 für Mali-G31 (RK3326) ─────────────────────────────────
 option(WOTS2_GLES "Build for OpenGL ES 3.2 (Mali-G31)" OFF)
 
-# ── SDL2 ─────────────────────────────────────────────────────────────────────
+# ── SDL2 ────────────────────────────────────────────────────────────────
 find_package(SDL2 QUIET)
 if(NOT SDL2_FOUND)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SDL2 REQUIRED sdl2)
-    # Normalize to imported target
     add_library(SDL2::SDL2 INTERFACE IMPORTED)
     target_include_directories(SDL2::SDL2 INTERFACE ${SDL2_INCLUDE_DIRS})
     target_link_libraries(SDL2::SDL2 INTERFACE ${SDL2_LIBRARIES})
     add_library(SDL2::SDL2main ALIAS SDL2::SDL2)
 endif()
 
-# ── OpenGL / OpenGL ES ───────────────────────────────────────────────────────
+# ── OpenGL / OpenGL ES ──────────────────────────────────────────────────
 if(WOTS2_GLES)
-    # Mali-G31: EGL + GLESv2 aus dem Cross-Sysroot. Der Linker findet
-    # libGLESv2.so und libEGL.so durch /usr/aarch64-linux-gnu/lib.
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(EGL   REQUIRED egl)
     pkg_check_modules(GLES2 REQUIRED glesv2)
@@ -42,19 +36,13 @@ if(WOTS2_GLES)
     target_link_libraries(OpenGL::GL INTERFACE
         ${EGL_LIBRARIES} ${GLES2_LIBRARIES})
     add_compile_definitions(WOTS2_GLES=1)
-    set(IMGUI_GL_BACKEND
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengles3.cpp)
-    set(IMGUI_GL_DEFS IMGUI_IMPL_OPENGL_ES3)
     message(STATUS "WOTS2: building for OpenGL ES 3.2 (Mali-G31)")
 else()
     find_package(OpenGL REQUIRED)
-    set(IMGUI_GL_BACKEND
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
-    set(IMGUI_GL_DEFS "")
     message(STATUS "WOTS2: building for Desktop OpenGL")
 endif()
 
-# ── HAL (PS2 hardware abstraction) ────────────────────────────────────────────
+# ── HAL (PS2 hardware abstraction) ──────────────────────────────────────
 add_library(hal STATIC
     src/hal/gs.cpp
     src/hal/spu2.cpp
@@ -64,7 +52,7 @@ add_library(hal STATIC
 target_include_directories(hal PUBLIC include)
 target_link_libraries(hal PUBLIC SDL2::SDL2 OpenGL::GL)
 
-# ── Decompiled code that runs natively ────────────────────────────────────────
+# ── Decompiled code that runs natively ──────────────────────────────────
 add_library(game STATIC
     src/engine/app.cpp
     src/engine/notice.cpp
@@ -153,15 +141,14 @@ add_library(game STATIC
 target_include_directories(game PUBLIC include)
 target_link_libraries(game PRIVATE hal)
 
-# ── Decompiled code not wired in yet ──────────────────────────────────────────
-# Compiled so it keeps building, but not linked: its callees are not ported.
+# ── Decompiled code not wired in yet ────────────────────────────────────
 add_library(wip OBJECT
     src/engine/sdk_vsync.cpp
     src/engine/sdk_tlb.cpp
 )
 target_include_directories(wip PUBLIC include)
 
-# ── Native runtime: guest memory, archive, sprites, stand-ins for unported code ─
+# ── Native runtime ──────────────────────────────────────────────────────
 add_library(native STATIC
     src/native/guest.cpp
     src/native/archive.cpp
@@ -183,35 +170,39 @@ add_library(native STATIC
 target_include_directories(native PUBLIC include)
 target_link_libraries(native PRIVATE hal)
 
-# ── Dear ImGui, for the level editor (F2 in the world) ───────────────────────
+# ── Dear ImGui ──────────────────────────────────────────────────────────
 include(FetchContent)
 FetchContent_Declare(imgui
     URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(imgui)
+
+# ImGui's OpenGL backend is a single file: imgui_impl_opengl3.cpp. It handles
+# both desktop GL and GLES; the IMGUI_IMPL_OPENGL_ES3 define switches the
+# path. There is no separate imgui_impl_opengles3.cpp in stock ImGui.
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-    ${IMGUI_GL_BACKEND}
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui PUBLIC SDL2::SDL2)
-if(IMGUI_GL_DEFS)
-    target_compile_definitions(imgui PRIVATE ${IMGUI_GL_DEFS})
+if(WOTS2_GLES)
+    target_compile_definitions(imgui PRIVATE IMGUI_IMPL_OPENGL_ES3)
 endif()
 target_link_libraries(native PRIVATE imgui)
 
-# ── xxHash (XXH3), for texture packs made for PCSX2 (named by its hashes) ────
+# ── xxHash (XXH3) ───────────────────────────────────────────────────────
 FetchContent_Declare(xxhash
     URL https://github.com/Cyan4973/xxHash/archive/refs/tags/v0.8.2.tar.gz
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-FetchContent_MakeAvailable(xxhash)     # (no CMakeLists.txt at its top: only unpacked)
+FetchContent_MakeAvailable(xxhash)
 target_include_directories(native PRIVATE ${xxhash_SOURCE_DIR})
 
-# The launcher unpacks disc images (.iso, or archives holding one) with libarchive.
+# ── libarchive (disc images) ────────────────────────────────────────────
 find_package(LibArchive QUIET)
 if(LibArchive_FOUND)
     target_compile_definitions(native PRIVATE WOTS2_LIBARCHIVE)
@@ -221,30 +212,19 @@ else()
     message(STATUS "libarchive not found: wots2 will not unpack disc images (install libarchive-dev)")
 endif()
 
-# ── Main executable ───────────────────────────────────────────────────────────
+# ── Main executable ─────────────────────────────────────────────────────
 add_executable(wots2 src/main.cpp)
 if(WIN32)
-    # Everything but SDL2 (and libarchive's own libraries) linked in; the
-    # program has a plain main, so SDL's WinMain shim is not wanted.
-    # -mwindows: a windowed program (no console window of its own; the
-    # launcher sends what it prints to a console or to wots2.log).
     target_link_libraries(wots2 PRIVATE -Wl,--start-group game native -Wl,--end-group hal imgui
         opengl32 comdlg32 -mwindows -static-libgcc -static-libstdc++ -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic)
 elseif(APPLE)
-    # The game's memory sits at its PS2 addresses, from 1 MB up: the zero page
-    # must end below that (by default it covers the first 4 GB).
     target_link_libraries(wots2 PRIVATE game native game native hal imgui -Wl,-pagezero_size,0x10000)
-elseif(WOTS2_GLES)
-    # Mali-G31 / RK3326: EGL + GLESv2, kein Desktop-GL.
-    target_link_libraries(wots2 PRIVATE -Wl,--start-group game native -Wl,--end-group hal imgui
-        SDL2::SDL2main ${CMAKE_DL_LIBS})
 else()
     target_link_libraries(wots2 PRIVATE -Wl,--start-group game native -Wl,--end-group hal imgui
         SDL2::SDL2main ${CMAKE_DL_LIBS})
 endif()
 
-# ── Mods (mods/<name>/<name>.cpp → mods/<name>/<name>.so, beside its mod.ini) ──
-# Each is built against include/mod/wots2_mod.h alone.
+# ── Mods ────────────────────────────────────────────────────────────────
 file(GLOB mod_dirs RELATIVE ${CMAKE_SOURCE_DIR}/mods ${CMAKE_SOURCE_DIR}/mods/*)
 foreach(mod ${mod_dirs})
     if(EXISTS ${CMAKE_SOURCE_DIR}/mods/${mod}/${mod}.cpp)
@@ -255,9 +235,6 @@ foreach(mod ${mod_dirs})
     endif()
 endforeach()
 
-# Build type defaults: optimised, with debug information.  (An unoptimised
-# build spends about twice as long on a frame; -DCMAKE_BUILD_TYPE=Debug gives
-# one.)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
