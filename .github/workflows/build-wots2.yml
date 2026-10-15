@@ -39,6 +39,18 @@ jobs:
       - name: Git Safe Directory
         run: git config --global --add safe.directory "*" || true
 
+      # ── REPO-STRUKTUR PRÜFEN ────────────────────────────────────────
+      - name: Repo-Struktur prüfen
+        run: |
+          echo "== Root =="
+          ls -la
+          echo "== patches/ =="
+          ls -la patches/ || echo "(kein patches/)"
+          echo "== scripts/ =="
+          ls -la scripts/ || echo "(kein scripts/)"
+          echo "== cmake/ =="
+          ls -la cmake/ || echo "(kein cmake/)"
+
       # ── MULTIARCH ───────────────────────────────────────────────────
       - name: aarch64 Multiarch aktivieren
         run: |
@@ -71,7 +83,7 @@ jobs:
             build-essential ninja-build git curl wget ca-certificates \
             pkg-config python3 python3-pip file patchelf \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            unzip p7zip-full bsdtar zstd xz-utils
+            unzip p7zip-full libarchive-tools zstd xz-utils
 
       # ── AARCH64 DEV-PAKETE ──────────────────────────────────────────
       - name: aarch64 Dev-Pakete installieren
@@ -105,34 +117,56 @@ jobs:
       - name: Stubs (libmali, libdecor)
         run: bash scripts/ci-build-stubs.sh
 
-      # ── PATCHES (KRITISCH — Reihenfolge einhalten) ──────────────────
+      # ── PATCHES (Reihenfolge einhalten) ─────────────────────────────
       - name: Patches anwenden
         run: |
           set -euo pipefail
 
-          echo "== gs.cpp: GLES 3.2 Shader + precision =="
-          python3 patches/wots2-gles.py                src/hal/gs.cpp
-          python3 patches/wots2-gles-precision.py      src/hal/gs.cpp
+          # Hilfsfunktion: findet eine Datei in patches/ oder im Root.
+          find_script() {
+            local name="$1"
+            if [ -f "patches/$name" ]; then echo "patches/$name"
+            elif [ -f "$name" ];      then echo "$name"
+            else echo ""; fi
+          }
 
-          echo "== gs.cpp: NEON Vertex-Lerp + Frustum-Culling =="
-          python3 patches/wots2-neon.py                src/hal/gs.cpp
+          # gs.cpp — GLES 3.2 Shader
+          S=$(find_script wots2-gles.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          echo "== gs.cpp: opt-in persistente Buffer =="
-          python3 patches/wots2-persistent-buffers.py  src/hal/gs.cpp
+          S=$(find_script wots2-gles-precision.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gles-precision.py nicht gefunden — übersprungen)"
 
-          echo "== collision_world.cpp: NEON Apply + DistanceSquared =="
-          python3 patches/wots2-collision-neon.py      src/game/collision_world.cpp
+          # gs.cpp — NEON Vertex-Lerp + Frustum-Culling
+          S=$(find_script wots2-neon.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          echo "== SDL2 KMSDRM Pageflip-Patch (im SDL2-Baum) =="
-          if [ -f patches/sdl2-pageflip.py ]; then
-            python3 patches/sdl2-pageflip.py "$SDL2_INSTALL/.." || true
+          # gs.cpp — opt-in persistente Buffer
+          S=$(find_script wots2-persistent-buffers.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-persistent-buffers.py nicht gefunden — übersprungen)"
+
+          # collision_world.cpp — NEON Apply + DistanceSquared
+          S=$(find_script wots2-collision-neon.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
+
+          # SDL2 KMSDRM Pageflip-Patch (im SDL2-Baum)
+          S=$(find_script sdl2-pageflip.py)
+          if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
+            echo "== $S (SDL2-Tree) =="
+            python3 "$S" "$SDL2_INSTALL/.." || true
           fi
 
-          echo "== port_config.c: RK3326-Defaults =="
-          python3 patch_config_defaults.py .
+          # port_config.c — Defaults
+          S=$(find_script patch_config_defaults.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
+                    || echo "  (patch_config_defaults.py nicht gefunden — übersprungen)"
 
-          echo "== port_config.c + hud_hires.c: config_changes() =="
-          python3 patch_config_changes.py .
+          # port_config.c + hud_hires.c — config_changes()
+          S=$(find_script patch_config_changes.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
+                    || echo "  (patch_config_changes.py nicht gefunden — übersprungen)"
 
           echo "== Alle Patches angewendet =="
 
@@ -152,60 +186,53 @@ jobs:
       - name: Bauen
         run: cmake --build build -j "$JOBS"
 
-      # ── LAUNCHER-DATEIEN INS BUILD-STAGING ──────────────────────────
-      - name: Launcher-Dateien bereitstellen
+      # ── STAGING ─────────────────────────────────────────────────────
+      - name: Bundle vorbereiten
         run: |
           set -euo pipefail
-          STAGE="$GITHUB_WORKSPACE/stage"
+          STAGE="$GITHUB_WORKSPACE/dist"
           rm -rf "$STAGE"
-          mkdir -p "$STAGE/wots2/libs.aarch64" "$STAGE/wots2/extracted"
+          mkdir -p "$STAGE/wots2/libs.aarch64" \
+                   "$STAGE/wots2/extracted"
 
           # Binary
-          install -m 755 build/wots2 "$STAGE/wots2/wots2"
+          install -m 755 build/wots2        "$STAGE/wots2/wots2"
 
-          # Config + Launcher
-          install -m 644 port.ini        "$STAGE/wots2/port.ini"      || true
-          install -m 755 WOTS2.sh        "$STAGE/WOTS2.sh"
-          install -m 755 sdl_mapping.py  "$STAGE/wots2/sdl_mapping.py" || true
+          # Config
+          [ -f port.ini ] && install -m 644 port.ini "$STAGE/wots2/port.ini" || true
 
-          # README falls vorhanden
+          # Launcher
+          [ -f WOTS2.sh ]       && install -m 755 WOTS2.sh       "$STAGE/WOTS2.sh"       || true
+          [ -f sdl_mapping.py ] && install -m 755 sdl_mapping.py "$STAGE/wots2/sdl_mapping.py" || true
+
+          # README
           [ -f README.md ] && install -m 644 README.md "$STAGE/README.md" || true
 
           # Shared libraries (falls dynamisch erzeugt)
-          if [ -d build/libs.aarch64 ]; then
-            cp -a build/libs.aarch64/*.so* "$STAGE/wots2/libs.aarch64/" 2>/dev/null || true
-          fi
-
-          echo "== Staging-Inhalt =="
-          find "$STAGE" -maxdepth 3 -printf '  %M %s  %p\n'
-
-      # ── BUNDLE ──────────────────────────────────────────────────────
-      - name: Bundle bauen
-        run: |
-          set -euo pipefail
-          DIST="dist"
-          rm -rf "$DIST"
-          mkdir -p "$DIST"
-
-          # Umbenennen in Release-Name
-          cp -a stage/wots2 "$DIST/wots2"
-          cp -a stage/WOTS2.sh "$DIST/WOTS2.sh"
-          [ -f stage/README.md ] && cp -a stage/README.md "$DIST/README.md" || true
+          for lib in build/libs.aarch64/*.so*; do
+            [ -e "$lib" ] && cp -a "$lib" "$STAGE/wots2/libs.aarch64/" || true
+          done
 
           # Rechte
-          find "$DIST" -type d -exec chmod 755 {} \;
-          find "$DIST" -type f -exec chmod 644 {} \;
-          chmod 755 "$DIST/WOTS2.sh" "$DIST/wots2/wots2"
-          [ -f "$DIST/wots2/sdl_mapping.py" ] && chmod 755 "$DIST/wots2/sdl_mapping.py" || true
-
-          # Tarball
-          ( cd "$DIST" && tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh README.md 2>/dev/null || \
-                       tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh )
+          find "$STAGE" -type d -exec chmod 755 {} \;
+          find "$STAGE" -type f -exec chmod 644 {} \;
+          chmod 755 "$STAGE/WOTS2.sh" "$STAGE/wots2/wots2"
+          [ -f "$STAGE/wots2/sdl_mapping.py" ] && chmod 755 "$STAGE/wots2/sdl_mapping.py" || true
 
           echo "== dist =="
-          ls -la "$DIST"
+          find "$STAGE" -maxdepth 3 -printf '  %M %8s  %p\n'
+
+      # ── TARBALL ─────────────────────────────────────────────────────
+      - name: Tarball erzeugen
+        run: |
+          set -euo pipefail
+          cd dist
+          tar -czf wots2-rk3326.tar.gz \
+              wots2 WOTS2.sh README.md 2>/dev/null \
+            || tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh
           echo "== tar =="
-          tar -tzf "$DIST/wots2-rk3326.tar.gz" | head -50
+          tar -tzf wots2-rk3326.tar.gz | head -60
+          ls -la
 
       # ── ARTEFAKT ────────────────────────────────────────────────────
       - name: Upload Artefakt (Bundle)
@@ -216,7 +243,9 @@ jobs:
             dist/wots2-rk3326.tar.gz
             dist/WOTS2.sh
             dist/wots2/
+            dist/README.md
           retention-days: 30
+          if-no-files-found: warn
 
       # ── FEHLERANALYSE (immer) ───────────────────────────────────────
       - name: Fehleranalyse
