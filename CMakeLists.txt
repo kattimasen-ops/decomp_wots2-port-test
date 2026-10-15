@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(wots2_native CXX C)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # CMake 4.x Kompatibilität
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # CMake 4.x hat alle Policies < 3.5 entfernt. Viele von FetchContent
 # geladene Projekte (xxHash deklariert VERSION 2.8.12) werden sonst mit
 # einem Hard-Error abgelehnt. Diese Variable sagt CMake, dass es die
@@ -12,9 +12,9 @@ if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.30")
     set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 endif()
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Globale Compiler-Einstellungen
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -28,24 +28,24 @@ if(WIN32)
     add_compile_definitions(GetThreadId=Ps2_GetThreadId)
 endif()
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # LTO (Link-Time Optimization)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Über CMake statt im Toolchain-File, damit einzelne Targets (imgui)
 # es abschalten können. CMake's IPO nutzt -flto für GCC (unterstützt
 # seit GCC 4.5), nicht -flto=auto (erst GCC 10).
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # OpenGL ES 3.2 für Mali-G31 (RK3326)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Default OFF (Desktop-GL 3.3 für x86_64-Entwicklung).
 # -DWOTS2_GLES=ON aktiviert den Mali-Pfad: EGL + GLESv2 statt libGL.
 option(WOTS2_GLES "Build for OpenGL ES 3.2 (Mali-G31)" OFF)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # SDL2
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Bevorzugt SDL2Config.cmake (aus dem selbst gebauten SDL2 in
 # $SDL2_INSTALL/lib/cmake/SDL2). Fällt auf pkg-config zurück, wenn die
 # Config-Datei fehlt (z. B. bei Ubuntu-Paket-Installation ohne CMake-Modul).
@@ -58,9 +58,8 @@ if(NOT SDL2_FOUND)
     target_link_libraries(SDL2::SDL2 INTERFACE ${SDL2_LIBRARIES})
 endif()
 
-# SDL2::SDL2main ist nicht in jedem SDL2-Build vorhanden (hängt von
-# SDL2_CONFIG_USING_MAIN ab). Ohne Target würde target_link_libraries
-# einen Hard-Error werfen.
+# SDL2::SDL2main ist nicht in jedem SDL2-Build vorhanden. Ohne Target
+# würde target_link_libraries einen Hard-Error werfen.
 if(NOT TARGET SDL2::SDL2main)
     add_library(SDL2::SDL2main INTERFACE IMPORTED)
     if(TARGET SDL2::SDL2)
@@ -68,9 +67,9 @@ if(NOT TARGET SDL2::SDL2main)
     endif()
 endif()
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # OpenGL / OpenGL ES
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # WICHTIG: find_package(OpenGL) beim Cross-Compile findet die
 # x86_64-libGL des Hosts, wenn kein Sysroot-Filter greift. Für GLES
 # umgehen wir es komplett und nutzen pkg-config mit den Cross-.pc-Dateien.
@@ -92,9 +91,9 @@ else()
     message(STATUS "WOTS2: building for Desktop OpenGL")
 endif()
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # HAL (PS2 hardware abstraction)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 add_library(hal STATIC
     src/hal/gs.cpp
     src/hal/spu2.cpp
@@ -104,9 +103,9 @@ add_library(hal STATIC
 target_include_directories(hal PUBLIC include)
 target_link_libraries(hal PUBLIC SDL2::SDL2 OpenGL::GL)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Decompiled code that runs natively
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 add_library(game STATIC
     src/engine/app.cpp
     src/engine/notice.cpp
@@ -195,22 +194,23 @@ add_library(game STATIC
 target_include_directories(game PUBLIC include)
 target_link_libraries(game PRIVATE hal)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Decompiled code not wired in yet (compiliert, aber nicht gelinkt)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 add_library(wip OBJECT
     src/engine/sdk_vsync.cpp
     src/engine/sdk_tlb.cpp
 )
 target_include_directories(wip PUBLIC include)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Native runtime
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 add_library(native STATIC
     src/native/guest.cpp
     src/native/archive.cpp
     src/native/launcher.cpp
+    src/native/port_options.cpp        # NEU: port.ini-Loader
     src/native/sprites.cpp
     src/native/texture_pack.cpp
     src/native/model.cpp
@@ -228,9 +228,9 @@ add_library(native STATIC
 target_include_directories(native PUBLIC include)
 target_link_libraries(native PRIVATE hal)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Dear ImGui (Level-Editor)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 include(FetchContent)
 FetchContent_Declare(imgui
     URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9.tar.gz
@@ -269,9 +269,9 @@ set_target_properties(imgui PROPERTIES INTERPROCEDURAL_OPTIMIZATION FALSE)
 
 target_link_libraries(native PRIVATE imgui)
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # xxHash (XXH3, für PCSX2-Texturpacks)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # xxHash v0.8.2 hat ein CMakeLists.txt mit cmake_minimum_required
 # (VERSION 2.8.12) — das wird von CMake 4.x abgelehnt. Wir nutzen
 # FetchContent_Populate (nur Quellen entpacken, KEIN add_subdirectory)
@@ -285,9 +285,9 @@ if(NOT xxhash_POPULATED)
 endif()
 target_include_directories(native PRIVATE ${xxhash_SOURCE_DIR})
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # libarchive (Disc-Images entpacken)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Der Launcher entpackt .iso / .zip / .7z. find_package sucht im
 # Sysroot nach libarchive. Wir erlauben explizite Pfadangabe.
 find_package(LibArchive QUIET)
@@ -300,9 +300,9 @@ else()
     message(STATUS "WOTS2: libarchive fehlt — Disc-Images werden NICHT unterstützt")
 endif()
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Main executable
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 add_executable(wots2 src/main.cpp)
 
 if(WIN32)
@@ -327,9 +327,9 @@ else()
         ${CMAKE_DL_LIBS})
 endif()
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Mods (mods/<name>/<name>.cpp → mods/<name>/<name>.so)
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # file(GLOB) mit relativen Pfaden: existiert mods/ nicht, bleibt die
 # Liste leer — kein Fehler. (file(GLOB ... CONFIGURE_DEPENDS) wäre
 # bei CI-Builds problematisch, weil CMake bei jedem Build neu prüft.)
@@ -345,9 +345,9 @@ foreach(mod ${mod_dirs})
     endif()
 endforeach()
 
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 # Build-Type Default
-# ═══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
