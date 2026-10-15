@@ -23,39 +23,18 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 #   GCC AArch64 Options:
 #     https://gcc.gnu.org/onlinedocs/gcc/AArch64-Options.html
 #   ARM Cortex-A35 TRM: ARMv8.0-A, kein LSE, CRC-Extension vorhanden
-set(_WOTS2_CPU
-    "-mcpu=cortex-a35"
-    "-mtune=cortex-a35"
-    "-mno-outline-atomics"     # KRITISCH: kein LSE auf A35 -> SIGILL ohne das
-    "-march=armv8-a+crc"
-)
+#
+# WICHTIG: Alle Flags als ein einziger String mit Leerzeichen, NICHT
+# als CMake-Liste. Sonst fügt CMake Semikolons ein und GCC versteht
+# die Flags nicht.
 
-set(_WOTS2_OPT
-    "-O3"
-    "-funroll-loops"
-    "-fno-math-errno"
-    "-fno-trapping-math"
-    "-fomit-frame-pointer"
-    "-ffunction-sections"
-    "-fdata-sections"
-    "-fno-plt"
-    "-fno-semantic-interposition"
-    "-fno-strict-aliasing"
-    "-fmerge-all-constants"
-    "-fno-common"
-    "-DNDEBUG"
-    "-Wno-psabi"
-)
+set(_WOTS2_CPU "-mcpu=cortex-a35 -mtune=cortex-a35 -mno-outline-atomics -march=armv8-a+crc")
+
+set(_WOTS2_OPT "-O3 -funroll-loops -fno-math-errno -fno-trapping-math -fomit-frame-pointer -ffunction-sections -fdata-sections -fno-plt -fno-semantic-interposition -fno-strict-aliasing -fmerge-all-constants -fno-common -DNDEBUG -Wno-psabi")
 
 set(_WOTS2_LTO "-flto=auto")
 
-set(_WOTS2_LD
-    "-flto=auto"
-    "-Wl,--gc-sections"
-    "-Wl,--as-needed"
-    "-Wl,-O2"
-    "-Wl,--sort-common"
-)
+set(_WOTS2_LD "-flto=auto -Wl,--gc-sections -Wl,--as-needed -Wl,-O2 -Wl,--sort-common")
 
 set(CMAKE_C_FLAGS_INIT   "${_WOTS2_CPU} ${_WOTS2_OPT} ${_WOTS2_LTO}")
 set(CMAKE_CXX_FLAGS_INIT "${_WOTS2_CPU} ${_WOTS2_OPT} ${_WOTS2_LTO}")
