@@ -12,12 +12,18 @@ set +e
     echo ""
     echo "== SDL2:"
     ls -la "$SDL2_INSTALL/lib/" 2>/dev/null || echo "  (kein lib-Verzeichnis)"
+
     SDL2_LIB=$(find "$SDL2_INSTALL/lib" -maxdepth 1 \( -name "libSDL2*.so*" \) 2>/dev/null | head -n 1)
     if [ -n "$SDL2_LIB" ]; then
-        aarch64-linux-gnu-strings "$SDL2_LIB" | grep -q "Async pageflip rejected" \
-            && echo "  OK: Pageflip-Patch" \
-            || echo "  FEHLT: Pageflip-Patch"
+        # grep -c gegen Pipe (vermeidet SIGPIPE-Effekt)
+        N=$(aarch64-linux-gnu-strings "$SDL2_LIB" | grep -c "Async pageflip rejected" || true)
+        if [ "$N" -gt 0 ]; then
+            echo "  OK: Pageflip-Patch ($N Treffer)"
+        else
+            echo "  FEHLT: Pageflip-Patch"
+        fi
     fi
+
     echo ""
     echo "== Build-Artefakt:"
     if [ -f dist/wots2 ]; then
