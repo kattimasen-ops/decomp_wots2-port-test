@@ -1,3 +1,11 @@
+// ══════════════════════════════════════════════════════════════════════
+//  Way of the Samurai 2 — M9 Pro (RK3326) Port
+//  main.cpp — Programm-Einstieg
+//
+//  Decompilation:  acklavidian (github.com/acklavidian/decomp_wots2)
+//  RK3326-Port:    St0len-One
+//  Target:         Rockchip RK3326 / Cortex-A35 / Mali-G31 MP2
+// ══════════════════════════════════════════════════════════════════════
 #include "game/map_db.h"
 #include <vector>
 #include <cstdio>
@@ -12,7 +20,7 @@
 #include "native/launcher.h"
 #include "native/model.h"
 #include "native/mods.h"
-#include "native/port_options.h"      // NEU: port.ini-Loader
+#include "native/port_options.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -25,7 +33,24 @@ static void shutdown() {
     hal::gs::shutdown();
 }
 
+static void print_credits() {
+    std::fprintf(stderr, "\n");
+    std::fprintf(stderr, "=====================================================\n");
+    std::fprintf(stderr, "  Way of the Samurai 2 - Native Port\n");
+    std::fprintf(stderr, "  Target: Rockchip RK3326 / Cortex-A35 / Mali-G31\n");
+    std::fprintf(stderr, "-----------------------------------------------------\n");
+    std::fprintf(stderr, "  Decompilation:  acklavidian\n");
+    std::fprintf(stderr, "                  github.com/acklavidian/decomp_wots2\n");
+    std::fprintf(stderr, "  RK3326-Port:    St0len-One\n");
+    std::fprintf(stderr, "-----------------------------------------------------\n");
+    std::fprintf(stderr, "  Build: %s %s\n", __DATE__, __TIME__);
+    std::fprintf(stderr, "=====================================================\n\n");
+    std::fflush(stderr);
+}
+
 int main(int argc, char* argv[]) {
+    print_credits();
+
     // Directory holding the files from the game disc (SLUS_208.93, VOLUME.DAT, …):
     // given, found, or unpacked from a disc image first (the launcher).
     std::string root = launcher::locate(argc, argv);
@@ -51,9 +76,11 @@ int main(int argc, char* argv[]) {
     {
         port_options::Options opts;
         bool loaded = false;
-        for (const std::string& candidate : {
-                std::string("port.ini"),
-                root + "/port.ini" }) {
+        const std::string candidates[] = {
+            std::string("port.ini"),
+            root + "/port.ini"
+        };
+        for (const auto& candidate : candidates) {
             if (FILE* f = fopen(candidate.c_str(), "rb")) {
                 fclose(f);
                 opts = port_options::load(candidate.c_str());
@@ -62,16 +89,16 @@ int main(int argc, char* argv[]) {
             }
         }
         if (!loaded) {
-            fprintf(stderr, "[main] port.ini nicht gefunden; Defaults aktiv\n");
+            fprintf(stderr, "[main] port.ini nicht gefunden - Defaults aktiv\n");
         }
         port_options::apply(opts);
     }
 
-    hal::gs::init(640, 448, "Way of the Samurai 2 [native]");
+    hal::gs::init(640, 448, "Way of the Samurai 2 [St0len-One RK3326 port]");
 
     // Debug aid: WOTS2_VIDEO="aspect=1.7778,height=1080,fps=60" sets what the
     // video mods would (see hal::gs::Video), without any mod. Überschreibt
-    // port.ini-Werte, damit man sie beim Testen schnell ändern kann.
+    // port.ini-Werte.
     if (const char* v = getenv("WOTS2_VIDEO")) {
         hal::gs::Video video = hal::gs::video();
         if (const char* at = strstr(v, "aspect=")) video.aspect = (float)atof(at + 7);
@@ -132,7 +159,7 @@ int main(int argc, char* argv[]) {
                 for (GuestMapNode* e = GuestIntMap_Begin(&link->exits); e != GuestIntMap_End(&link->exits);
                      e = GuestIntMap_Next(e)) {
                     AreaExit* exit = guest::ptr<AreaExit>(e->value);
-                    printf(" %d→%d(%s)", e->key, exit->target, exit->name ? guest::ptr<const char>(exit->name) : "");
+                    printf(" %d\u2192%d(%s)", e->key, exit->target, exit->name ? guest::ptr<const char>(exit->name) : "");
                 }
                 printf("\n");
             }
