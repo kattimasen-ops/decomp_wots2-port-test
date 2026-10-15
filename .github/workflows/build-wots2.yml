@@ -122,7 +122,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Hilfsfunktion: findet eine Datei in patches/ oder im Root.
           find_script() {
             local name="$1"
             if [ -f "patches/$name" ]; then echo "patches/$name"
@@ -130,43 +129,48 @@ jobs:
             else echo ""; fi
           }
 
-          # gs.cpp — GLES 3.2 Shader
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gles-precision.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gles-precision.py nicht gefunden — übersprungen)"
+          if [ -n "$S" ]; then
+            echo "== $S =="; python3 "$S" src/hal/gs.cpp
+          else
+            echo "  (wots2-gles-precision.py nicht gefunden — übersprungen)"
+          fi
 
-          # gs.cpp — NEON Vertex-Lerp + Frustum-Culling
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # gs.cpp — opt-in persistente Buffer
           S=$(find_script wots2-persistent-buffers.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-persistent-buffers.py nicht gefunden — übersprungen)"
+          if [ -n "$S" ]; then
+            echo "== $S =="; python3 "$S" src/hal/gs.cpp
+          else
+            echo "  (wots2-persistent-buffers.py nicht gefunden — übersprungen)"
+          fi
 
-          # collision_world.cpp — NEON Apply + DistanceSquared
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
 
-          # SDL2 KMSDRM Pageflip-Patch (im SDL2-Baum)
           S=$(find_script sdl2-pageflip.py)
           if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
             echo "== $S (SDL2-Tree) =="
             python3 "$S" "$SDL2_INSTALL/.." || true
           fi
 
-          # port_config.c — Defaults
           S=$(find_script patch_config_defaults.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (patch_config_defaults.py nicht gefunden — übersprungen)"
+          if [ -n "$S" ]; then
+            echo "== $S =="; python3 "$S" .
+          else
+            echo "  (patch_config_defaults.py nicht gefunden — übersprungen)"
+          fi
 
-          # port_config.c + hud_hires.c — config_changes()
           S=$(find_script patch_config_changes.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (patch_config_changes.py nicht gefunden — übersprungen)"
+          if [ -n "$S" ]; then
+            echo "== $S =="; python3 "$S" .
+          else
+            echo "  (patch_config_changes.py nicht gefunden — übersprungen)"
+          fi
 
           echo "== Alle Patches angewendet =="
 
@@ -186,6 +190,23 @@ jobs:
       - name: Bauen
         run: cmake --build build -j "$JOBS"
 
+      # ── BINARY-ABHÄNGIGKEITEN PROTOKOLLIEREN ────────────────────────
+      - name: Binary-Abhängigkeiten protokollieren
+        run: |
+          set -euo pipefail
+          echo "== readelf -d build/wots2 | NEEDED =="
+          aarch64-linux-gnu-readelf -d build/wots2 | grep -E 'NEEDED|SONAME' || true
+          echo
+          echo "== Dynamischer Interpreter =="
+          aarch64-linux-gnu-readelf -l build/wots2 | grep -i interpreter || true
+          echo
+          echo "== Dateigröße / Typ =="
+          ls -la build/wots2
+          file build/wots2
+          echo
+          echo "== Erwartet: nur libc.so.6, libm.so.6, evtl. libEGL / libGLESv2 =="
+          echo "== libstdc++ / libgcc_s dürfen NICHT mehr auftauchen =="
+
       # ── STAGING ─────────────────────────────────────────────────────
       - name: Bundle vorbereiten
         run: |
@@ -195,25 +216,18 @@ jobs:
           mkdir -p "$STAGE/wots2/libs.aarch64" \
                    "$STAGE/wots2/extracted"
 
-          # Binary
           install -m 755 build/wots2        "$STAGE/wots2/wots2"
-
-          # Config
           [ -f port.ini ] && install -m 644 port.ini "$STAGE/wots2/port.ini" || true
 
-          # Launcher
           [ -f WOTS2.sh ]       && install -m 755 WOTS2.sh       "$STAGE/WOTS2.sh"       || true
           [ -f sdl_mapping.py ] && install -m 755 sdl_mapping.py "$STAGE/wots2/sdl_mapping.py" || true
 
-          # README
           [ -f README.md ] && install -m 644 README.md "$STAGE/README.md" || true
 
-          # Shared libraries (falls dynamisch erzeugt)
           for lib in build/libs.aarch64/*.so*; do
             [ -e "$lib" ] && cp -a "$lib" "$STAGE/wots2/libs.aarch64/" || true
           done
 
-          # Rechte
           find "$STAGE" -type d -exec chmod 755 {} \;
           find "$STAGE" -type f -exec chmod 644 {} \;
           chmod 755 "$STAGE/WOTS2.sh" "$STAGE/wots2/wots2"
