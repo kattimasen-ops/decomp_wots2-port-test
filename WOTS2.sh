@@ -6,7 +6,6 @@
 #            direkt die Binary.
 #
 # Benötigt: bsdtar (libarchive-tools) ODER 7z (p7zip-full).
-#           Auf ArkOS4Clone ist mindestens eines davon vorhanden.
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
@@ -60,10 +59,7 @@ for candidate in \
     "/opt/tools/PortMaster" \
     "$XDG_DATA_HOME/PortMaster" \
     "/roms/ports/PortMaster"; do
-    if [ -d "$candidate" ]; then
-        PM_CONTROLFOLDER="$candidate"
-        break
-    fi
+    [ -d "$candidate" ] && PM_CONTROLFOLDER="$candidate" && break
 done
 
 if [ -n "$PM_CONTROLFOLDER" ] && [ -f "$PM_CONTROLFOLDER/control.txt" ]; then
@@ -80,10 +76,8 @@ if [ -n "${sdl_controllerconfig:-}" ]; then
     log "SDL_GAMECONTROLLERCONFIG aus PortMaster gesetzt."
 elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
     SDL_MAP="$(cd "$GAMEDIR" && python3 sdl_mapping.py 2>/dev/null)"
-    if [ -n "$SDL_MAP" ]; then
-        export SDL_GAMECONTROLLERCONFIG="$SDL_MAP"
+    [ -n "$SDL_MAP" ] && export SDL_GAMECONTROLLERCONFIG="$SDL_MAP" && \
         log "SDL_GAMECONTROLLERCONFIG aus sdl_mapping.py gesetzt."
-    fi
 fi
 
 # ── SYSTEMOPTIMIERUNG ────────────────────────────────────────────────
@@ -123,9 +117,16 @@ if [ -n "$gpu_devfreq_path" ]; then
     fi
 fi
 
+# ── ZRAM mit lz4 (schneller als lzo auf dem A35) ─────────────────────
 if ! swapon --show 2>/dev/null | grep -q zram; then
     modprobe zram 2>/dev/null || true
     if [ -e /dev/zram0 ]; then
+        if grep -q lz4 /sys/block/zram0/comp_algorithm 2>/dev/null; then
+            echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || true
+            log "ZRAM-Kompressor: lz4"
+        else
+            log "ZRAM-Kompressor: Standard (lzo)"
+        fi
         echo 512M > /sys/block/zram0/disksize 2>/dev/null || true
         mkswap /dev/zram0 >/dev/null 2>&1 || true
         swapon /dev/zram0 2>/dev/null || true
@@ -257,6 +258,10 @@ export MALI_AFBC=1
 export MALI_MAX_ASYNC_BUFFER_COUNT=2
 export MALI_BUFFER_PREALLOC=1
 
+# SDL2-Audio: groesserer Puffer, weniger Callback-Overhead.
+# WOTS2 ist Singleplayer — Latenz spielt keine Rolle, CPU-Last schon.
+export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
+
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
     log "FEHLER: ./wots2 fehlt oder nicht ausfuehrbar."
@@ -270,7 +275,7 @@ fi
 log_section "ISO-ENTPACKEN"
 
 if [ -d "$EXTRACTED" ] && [ -n "$(ls -A "$EXTRACTED" 2>/dev/null)" ]; then
-    log "extracted/ bereits vorhanden — überspringe Entpacken."
+    log "extracted/ bereits vorhanden — ueberspringe Entpacken."
 else
     IMG=""
     for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
@@ -287,14 +292,10 @@ else
     log "Disc-Image: $IMG"
 
     EXTRACTOR=""
-    if command -v bsdtar >/dev/null 2>&1; then
-        EXTRACTOR="bsdtar"
-    elif command -v 7z >/dev/null 2>&1; then
-        EXTRACTOR="7z"
-    elif command -v 7za >/dev/null 2>&1; then
-        EXTRACTOR="7za"
-    elif command -v unzip >/dev/null 2>&1; then
-        EXTRACTOR="unzip"
+    if command -v bsdtar >/dev/null 2>&1; then EXTRACTOR="bsdtar"
+    elif command -v 7z >/dev/null 2>&1; then EXTRACTOR="7z"
+    elif command -v 7za >/dev/null 2>&1; then EXTRACTOR="7za"
+    elif command -v unzip >/dev/null 2>&1; then EXTRACTOR="unzip"
     fi
 
     if [ -z "$EXTRACTOR" ]; then
