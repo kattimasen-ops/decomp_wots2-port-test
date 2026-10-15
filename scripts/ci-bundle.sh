@@ -20,13 +20,25 @@ done
 
 cat > dist/WOTS2.sh <<'LAUNCHER'
 #!/bin/sh
+# ═════════════════════════════════════════════════════════════════
+#  Way of the Samurai 2 — RK3326 Launcher
+#
+#  Decompilation:  acklavidian (github.com/acklavidian/decomp_wots2)
+#  RK3326-Port:    St0len-One
+#  Target:         Rockchip RK3326 / Cortex-A35 / Mali-G31 MP2
+# ═════════════════════════════════════════════════════════════════
+
 DIR=$(dirname "$(readlink -f "$0")")
+cd "$DIR"
 export LD_LIBRARY_PATH="$DIR/libs.aarch64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export SDL_VIDEODRIVER=kmsdrm
 export SDL_AUDIODRIVER=alsa
+
+# CPU-Governor auf performance
 if [ -w /sys/devices/system/cpu/cpufreq/policy0/scaling_governor ]; then
     echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || true
 fi
+
 exec "$DIR/wots2" "$@"
 LAUNCHER
 chmod +x dist/WOTS2.sh
