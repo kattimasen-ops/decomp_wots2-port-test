@@ -2,23 +2,28 @@
 """
 2D-Draw-Call-Batching fuer Mali-G31.
 
+Fix v2:
+  - Helper wird NACH `static Frame s_cur, s_prev;` eingefuegt, nicht am
+    Dateianfang (dort ist Cmd noch nicht deklariert).
+  - Kein separates wots2_batch_init(): der Env-Check sitzt direkt in der
+    Variable s_batchEnabled. Damit laeuft der Patch nicht mehr in die
+    Falle, den statischen s_recOwner-Initializer als Anker zu nehmen.
+  - Batching-Code steht direkt in push_2d() vor dem push()-Aufruf.
+
 Hintergrund:
   ARM empfiehlt fuer OpenGL ES auf Mali weniger als 500 Draw Calls pro
   Frame. gs.cpp ruft aktuell glBufferData fuer JEDEN Draw2D-Befehl auf.
-  Aufeinanderfolgende Draw2D-Befehle mit derselben Textur koennen
-  zusammengefasst werden, weil zwischen ihnen kein State-Wechsel liegt.
+  Aufeinanderfolgende Draw2D-Befehle mit derselben Textur und demselben
+  Primitiv koennen zusammengefasst werden, weil zwischen ihnen kein
+  State-Wechsel liegt.
 
-Was der Patch macht:
-  In begin_frame() wird ein Zusammenfasser eingebaut, der beim
-  Hinzufuegen eines Draw2D prueft, ob der vorige Befehl denselben
-  Textur-State hat und keine andere Operation dazwischen liegt. Wenn
-  ja, wird nur der count erhoeht, statt einen neuen Cmd zu erzeugen.
-  Am Ende wird v2 einmal komprimiert.
-
-  Effekt: statt O(n) glBufferData-Aufrufen nur O(1) pro Textur-Batch.
-
-Steuerung per Env:
-  WOTS2_NO_BATCH=1 → Batching aus (Diagnose)
+Sicherheit:
+  - Nur wenn s_recZ == kNoZ (kein Z-State) — sonst kann das Flag nicht
+    korrekt auf den zusammengefassten Befehl uebertragen werden.
+  - Nur wenn tex != s_grabTex (der Grab-Pfad setzt kFrameTex).
+  - Nur wenn der neue Draw NICHT kSpan bekaeme (sonst wuerde der
+    Wide-Screen-Push nicht mehr auf alle Vertizes passen).
+  - Bei Problemen abschaltbar mit WOTS2_NO_BATCH=1.
 
 Python 3.6+ kompatibel.
 """
@@ -27,77 +32,70 @@ import sys
 import pathlib
 
 
-HELPER = r'''
+HELPER = '''
 // ── 2D-Draw-Call-Batching (Mali-G31) ─────────────────────────────────
-// Siehe patches/wots2-gs-batch-2d.py.
-static bool s_batchEnabled = true;
-static void wots2_batch_init(void) {
-    if (getenv("WOTS2_NO_BATCH")) s_batchEnabled = false;
-    fprintf(stderr, "[batch-2d] %s\n", s_batchEnabled ? "aktiviert" : "deaktiviert");
-}
-
-// Beim Hinzufuegen eines 2D-Draws: pruefen, ob der vorige Befehl derselbe
-// Textur-State ist und direkt davor liegt. Wenn ja, count zusammenfassen
-// und den v2-Bereich im aktuellen Frame anpassen.
-static Cmd* wots2_batch_previous(void) {
-    if (!s_batchEnabled || s_cur.cmds.size() < 2)
-        return nullptr;
-    Cmd& last = s_cur.cmds[s_cur.cmds.size() - 1];
-    if (last.op != Op::Draw2D || last.flags != 0)
-        return nullptr;
-    return &last;
-}
+// wots2-gs-batch-2d.py
+static bool s_batchEnabled = (getenv("WOTS2_NO_BATCH") == nullptr);
 '''
 
-MARKER = "wots2_batch_init"
+MARKER = "wots2-gs-batch-2d.py"
 
 
 def patch(path):
     p = pathlib.Path(path)
     t = p.read_text()
+
     if MARKER in t:
         print('  Batch-Helper bereits vorhanden.')
         return
 
-    last_inc = list(re.finditer(r'^#include [<"][^\n]+[>\"]\n', t, re.M))
-    t = t[:last_inc[-1].end()] + HELPER + t[last_inc[-1].end():]
-
-    # Batching in push_2d() aktivieren: wenn der vorige Cmd dasselbe
-    # Textur-State hat, count erhoehen und den neuen Cmd vermeiden.
-    # Wir patchen an der Stelle, an der `Cmd& c = push(Op::Draw2D);` steht.
-    # Statt den push zu ersetzen, fuegen wir vor dem push einen
-    # Zusammenfasser-Block ein.
-    anchor = re.search(
-        r'static\s+Cmd&\s+push_2d\s*\(\s*GLuint\s+tex\s*,\s*Prim\s+prim\s*,\s*u32\s+first\s*,\s*int\s+count\s*\)\s*\{',
+    # 1. Helper nach `static Frame s_cur, s_prev;` einfügen.
+    anchor_struct = re.search(
+        r'(static\s+Frame\s+s_cur\s*,\s*s_prev\s*;\s*\n)',
         t)
-    if not anchor:
-        print('  WARNUNG: push_2d nicht gefunden.')
-        p.write_text(t)
-        return
+    if not anchor_struct:
+        print('  FEHLER: s_cur-Anker nicht gefunden.', file=sys.stderr)
+        sys.exit(1)
+    t = t[:anchor_struct.end()] + HELPER + t[anchor_struct.end():]
 
-    # Batching nur fuer den Fall (tex, prim, keine flags) — sonst Komplexitaet.
-    insert = (
-        "\n"
-        "    // Batching: wenn der vorige Befehl derselbe Textur-State ist und\n"
-        "    // direkt davor liegt, den count erhoehen statt eines neuen Cmds.\n"
-        "    if (s_batchEnabled && s_cur.cmds.size() >= 1\n"
-        "        && s_cur.cmds.back().op == Op::Draw2D\n"
-        "        && s_cur.cmds.back().tex == tex\n"
-        "        && s_cur.cmds.back().prim == (u8)prim\n"
-        "        && s_cur.cmds.back().flags == 0\n"
-        "        && s_recZ == kNoZ)\n"
-        "    {\n"
-        "        s_cur.cmds.back().count += count;\n"
-        "        return s_cur.cmds.back();\n"
-        "    }\n"
+    # 2. Batching-Code vor `Cmd& c = push(Op::Draw2D);` in push_2d.
+    anchor_push = re.search(
+        r'static\s+Cmd&\s+push_2d\s*\(\s*GLuint\s+tex\s*,\s*Prim\s+prim\s*,\s*'
+        r'u32\s+first\s*,\s*int\s+count\s*\)\s*\{',
+        t)
+    if not anchor_push:
+        print('  FEHLER: push_2d nicht gefunden.', file=sys.stderr)
+        sys.exit(1)
+    push_call = t.find('Cmd& c = push(Op::Draw2D);', anchor_push.end())
+    if push_call < 0:
+        print('  FEHLER: push(Op::Draw2D) in push_2d nicht gefunden.',
+              file=sys.stderr)
+        sys.exit(1)
+
+    batch_code = (
+        '\n'
+        '    // Batching-Vorprüfung: nur wenn alle Bedingungen passen.\n'
+        '    if (s_batchEnabled && s_recZ == kNoZ && !s_cur.cmds.empty()\n'
+        '        && tex != s_grabTex) {\n'
+        '        Cmd& prev = s_cur.cmds.back();\n'
+        '        if (prev.op == Op::Draw2D && prev.tex == tex\n'
+        '            && prev.prim == (u8)prim && prev.flags == 0) {\n'
+        '            float _lo = 1e9f, _hi = -1e9f;\n'
+        '            for (int _i = 0; _i < count; _i++) {\n'
+        '                const float _x = s_cur.v2[(size_t)first + (size_t)_i].x;\n'
+        '                _lo = _x < _lo ? _x : _lo;\n'
+        '                _hi = _x > _hi ? _x : _hi;\n'
+        '            }\n'
+        '            if (!(_lo <= 0.5f && _hi >= (float)s_width - 0.5f\n'
+        '                  && (tex == s_white || s_recWide))) {\n'
+        '                prev.count += count;\n'
+        '                s_recWide = false;\n'
+        '                return prev;\n'
+        '            }\n'
+        '        }\n'
+        '    }\n'
     )
-    t = t[:anchor.end()] + insert + t[anchor.end():]
-
-    # Batch-Init in begin_frame() nach s_recOwner = -1.
-    init_anchor = re.search(r'(\bs_recOwner\s*=\s*-1;\s*\n)', t)
-    if init_anchor:
-        t = t[:init_anchor.end()] + "    wots2_batch_init();\n" + t[init_anchor.end():]
-        print('  begin_frame(): batch_init eingefuegt.')
+    t = t[:push_call] + batch_code + t[push_call:]
 
     p.write_text(t)
     print('  Batch-Patch fertig.')
