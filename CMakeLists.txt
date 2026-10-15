@@ -34,7 +34,7 @@ endif()
 # Über CMake statt im Toolchain-File, damit einzelne Targets (imgui)
 # es abschalten können. CMake's IPO nutzt -flto für GCC (unterstützt
 # seit GCC 4.5), nicht -flto=auto (erst GCC 10).
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)
 
 # ══════════════════════════════════════════════════════════════════════
 # OpenGL ES 3.2 für Mali-G31 (RK3326)
