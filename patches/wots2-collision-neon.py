@@ -2,8 +2,13 @@
 """
 NEON-Optimierungen für src/game/collision_world.cpp.
 
-Fix gegenüber v1: Klammer-Matching statt [^}]* — verschachtelte
-Blöcke in Apply()/Distance() werden korrekt erfasst.
+Enthält:
+  1. Apply()            — 4x4-Matrix-Vektor-Multiplikation (NEON)
+  2. DistanceSquared()  — vermeidet sqrtf in den häufigen Vergleichen
+  3. Towards()          — Normalisierung eines 4-Vektors (NEON)
+
+Klammer-Matching statt [^}]* — verschachtelte Blöcke in Apply(),
+Distance(), Towards() werden korrekt erfasst (Bugfix v1 -> v2).
 
 Python 3.6+ kompatibel.
 """
@@ -12,10 +17,12 @@ import sys
 import pathlib
 
 
-NEON_APPLY_HELPER = r'''
+NEON_HELPER = r'''
 // ── NEON-Beschleunigung (aarch64) ────────────────────────────────────
 #if defined(__aarch64__)
 #include <arm_neon.h>
+
+// 4x4-Matrix × 4-Vektor (Zeilen-Konvention: v · M).
 static inline void wots2_apply_neon(float* out, const float* m, const float* v) {
     const float32x4_t vv = vld1q_f32(v);
     float32x4_t r = vmulq_laneq_f32(vld1q_f32(m +  0), vv, 0);
@@ -24,13 +31,33 @@ static inline void wots2_apply_neon(float* out, const float* m, const float* v) 
     r = vmlaq_laneq_f32(r, vld1q_f32(m + 12), vv, 3);
     vst1q_f32(out, r);
 }
-#define WOTS2_APPLY(out, m, v) wots2_apply_neon((out), (m), (v))
+
+// (a − b), normalisiert über alle vier Komponenten. Auf dem A35 wird
+// vaddvq_f32 (horizontale Summe) in 2 Zyklen ausgeführt; vgl. die
+// Skalar-Version mit 4 Subtraktionen, 4 Multiplikationen, 3 Additionen.
+static inline void wots2_towards_neon(float* out, const float* a, const float* b) {
+    const float32x4_t d = vsubq_f32(vld1q_f32(a), vld1q_f32(b));
+    const float sum = vaddvq_f32(vmulq_f32(d, d));
+    const float len = sqrtf(sum);
+    const float scale = len != 0.0f ? 1.0f / len : 0.0f;
+    vst1q_f32(out, vmulq_n_f32(d, scale));
+}
+
+#define WOTS2_APPLY(out, m, v)      wots2_apply_neon((out), (m), (v))
+#define WOTS2_TOWARDS(out, a, b)    wots2_towards_neon((out), (a), (b))
+
 #else
 #define WOTS2_APPLY(out, m, v) do { \
     float _r[4]; \
     for (int _j = 0; _j < 4; _j++) \
         _r[_j] = (v)[0]*(m)[_j] + (v)[1]*(m)[4+_j] + (v)[2]*(m)[8+_j] + (v)[3]*(m)[12+_j]; \
     memcpy((out), _r, 16); \
+} while (0)
+#define WOTS2_TOWARDS(out, a, b) do { \
+    float _d[4] = {(a)[0]-(b)[0], (a)[1]-(b)[1], (a)[2]-(b)[2], (a)[3]-(b)[3]}; \
+    float _l = sqrtf(_d[0]*_d[0]+_d[1]*_d[1]+_d[2]*_d[2]+_d[3]*_d[3]); \
+    float _s = _l != 0.0f ? 1.0f / _l : 0.0f; \
+    for (int _i = 0; _i < 4; _i++) (out)[_i] = _d[_i] * _s; \
 } while (0)
 #endif
 '''
@@ -83,7 +110,6 @@ def find_matching_brace(text, open_idx):
 
 
 def replace_function(text, sig_regex, new_body):
-    """Ersetzt eine Funktion, deren Signatur auf sig_regex passt."""
     m = re.search(sig_regex, text, re.S)
     if not m:
         return text, 0
@@ -101,11 +127,11 @@ def patch(path):
     t = p.read_text()
 
     if 'wots2_apply_neon' in t:
-        print('  NEON-Apply bereits vorhanden — überspringe.')
+        print('  NEON-Apply bereits vorhanden — ueberspringe.')
         return
 
     last_inc = list(re.finditer(r'^#include [<"][^\n]+[>\"]\n', t, re.M))[-1]
-    t = t[:last_inc.end()] + NEON_APPLY_HELPER + t[last_inc.end():]
+    t = t[:last_inc.end()] + NEON_HELPER + t[last_inc.end():]
 
     # ── Apply() ──────────────────────────────────────────────────────
     sig_apply = (r'static\s+void\s+Apply\s*\(\s*float\s*\*\s*out\s*,\s*'
@@ -117,7 +143,18 @@ def patch(path):
     )
     t, n_apply = replace_function(t, sig_apply, new_apply)
 
+    # ── Towards() ────────────────────────────────────────────────────
+    sig_towards = (r'static\s+void\s+Towards\s*\(\s*float\s*\*\s*out\s*,\s*'
+                   r'const\s+float\s*\*\s*a\s*,\s*const\s+float\s*\*\s*b\s*\)')
+    new_towards = (
+        'static inline void Towards(float* out, const float* a, const float* b) {\n'
+        '    WOTS2_TOWARDS(out, a, b);\n'
+        '}'
+    )
+    t, n_towards = replace_function(t, sig_towards, new_towards)
+
     # ── Distance() → DistanceSquared() ───────────────────────────────
+    n_dist = n_cmp = 0
     if 'DistanceSquared' not in t:
         sig_dist = (r'static\s+inline\s+float\s+Distance\s*\(\s*const\s+float\s*\*\s*a\s*,\s*'
                     r'const\s+float\s*\*\s*b\s*\)')
@@ -142,10 +179,11 @@ def patch(path):
             '    if (DistanceSquared(Centre(a), Centre(b)) > radSum * radSum)\n'
             '        return false;')
         t, n_cmp = old_cmp.subn(new_cmp, t)
-        print('  Distance: %d Funktion(en), %d Vergleich(e)' % (n_dist, n_cmp))
 
     p.write_text(t)
-    print('  NEON-Apply: %d Stelle(n)' % n_apply)
+    print('  NEON-Helper eingefuegt.')
+    print('  Apply: %d, Towards: %d, Distance: %d, Vergleich: %d'
+          % (n_apply, n_towards, n_dist, n_cmp))
 
 
 if __name__ == '__main__':
