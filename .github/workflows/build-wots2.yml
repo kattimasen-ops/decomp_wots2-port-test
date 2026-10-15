@@ -4,12 +4,17 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'README.md'
 
 permissions:
   contents: write
 
 jobs:
   build:
+    name: Build host (aarch64) for M9 Pro / RK3326
     runs-on: ubuntu-22.04
     container: ubuntu:20.04
     timeout-minutes: 120
@@ -24,10 +29,19 @@ jobs:
       JOBS: "4"
 
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0, submodules: false }
+      # ═══════════════════════════════════════════════════════════════
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
 
-      # ── aarch64-Multiarch ────────────────────────────────────────────
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory "*" || true
+
+      # ═══════════════════════════════════════════════════════════════
+      # aarch64-Multiarch
+      # ═══════════════════════════════════════════════════════════════
       - name: aarch64-Multiarch aktivieren
         run: |
           set -e
@@ -41,20 +55,25 @@ jobs:
           EOF
           apt-get update
 
-      # ── CMake aus Kitware-Repo (Container hat nur 3.16) ──────────────
-      - name: CMake 3.27+ aus Kitware-Repo installieren
+      # ═══════════════════════════════════════════════════════════════
+      # CMake 3.28.3 (Binary-Tarball statt Kitware-APT, um CMake 4.x
+      # und dessen Policy-Breaking-Changes zu vermeiden)
+      # ═══════════════════════════════════════════════════════════════
+      - name: CMake 3.28.3 installieren (offizieller Binary-Tarball)
         run: |
           set -e
-          apt-get install -y --no-install-recommends gnupg wget ca-certificates
-          wget -qO- https://apt.kitware.com/keys/kitware-archive-latest.asc \
-            | gpg --dearmor - > /usr/share/keyrings/kitware-archive-keyring.gpg
-          echo 'deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ focal main' \
-            > /etc/apt/sources.list.d/kitware.list
-          apt-get update
-          apt-get install -y --no-install-recommends cmake
+          apt-get install -y --no-install-recommends wget ca-certificates
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz
+          tar -xzf cmake-3.28.3-linux-x86_64.tar.gz -C /opt
+          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/cmake  /usr/local/bin/cmake
+          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/ctest  /usr/local/bin/ctest
+          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/cpack  /usr/local/bin/cpack
+          rm cmake-3.28.3-linux-x86_64.tar.gz
           cmake --version
 
-      # ── Build-Tools ──────────────────────────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # Native Build-Tools
+      # ═══════════════════════════════════════════════════════════════
       - name: Native Build-Tools installieren
         run: |
           apt-get install -y --no-install-recommends \
@@ -63,7 +82,9 @@ jobs:
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             binutils-aarch64-linux-gnu
 
-      # ── aarch64-Dev-Pakete ───────────────────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # aarch64-Dev-Pakete
+      # ═══════════════════════════════════════════════════════════════
       - name: aarch64-Dev-Pakete installieren
         run: |
           apt-get install -y --no-install-recommends \
@@ -74,7 +95,9 @@ jobs:
             libbz2-dev:arm64 liblzma-dev:arm64 libzstd-dev:arm64 liblz4-dev:arm64 \
             libwayland-dev:arm64
 
-      # ── Cross-Sysroot ────────────────────────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # Cross-Sysroot + pkg-config .pc-Dateien
+      # ═══════════════════════════════════════════════════════════════
       - name: Cross-Sysroot einrichten
         run: |
           set -e
@@ -89,7 +112,9 @@ jobs:
             [ -e "$tgt" ] && ln -sf "$tgt" "$lnk" || { echo "FEHLT: $tgt"; exit 1; }
           done
 
-          PC_DIR="$SYSROOT_LIB/pkgconfig"; mkdir -p "$PC_DIR"
+          PC_DIR="$SYSROOT_LIB/pkgconfig"
+          mkdir -p "$PC_DIR"
+
           cat > "$PC_DIR/egl.pc" <<'EOF'
           prefix=/usr
           libdir=/usr/aarch64-linux-gnu/lib
@@ -100,6 +125,7 @@ jobs:
           Libs: -L${libdir} -lEGL
           Cflags: -I${includedir}
           EOF
+
           cat > "$PC_DIR/glesv2.pc" <<'EOF'
           prefix=/usr
           libdir=/usr/aarch64-linux-gnu/lib
@@ -110,6 +136,7 @@ jobs:
           Libs: -L${libdir} -lGLESv2
           Cflags: -I${includedir}
           EOF
+
           cat > "$PC_DIR/libdrm.pc" <<'EOF'
           prefix=/usr
           libdir=/usr/aarch64-linux-gnu/lib
@@ -120,6 +147,7 @@ jobs:
           Libs: -L${libdir} -ldrm
           Cflags: -I${includedir}
           EOF
+
           cat > "$PC_DIR/gbm.pc" <<'EOF'
           prefix=/usr
           libdir=/usr/aarch64-linux-gnu/lib
@@ -130,11 +158,14 @@ jobs:
           Libs: -L${libdir} -lgbm
           Cflags: -I${includedir}
           EOF
+
           for m in libdrm gbm egl glesv2; do
             pkg-config --exists "$m" && echo "OK: $m $(pkg-config --modversion $m)"
           done
 
-      # ── SDL2 mit KMSDRM-Pageflip-Patch ───────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # SDL2 mit KMSDRM-Pageflip-Patch für Mali-G31 bauen
+      # ═══════════════════════════════════════════════════════════════
       - name: SDL2 mit KMSDRM-Pageflip-Patch bauen
         run: |
           set -e
@@ -144,6 +175,8 @@ jobs:
             "https://github.com/libsdl-org/SDL/archive/refs/tags/${SDL2_TAG}.tar.gz"
           tar -xzf /tmp/sdl2.tar.gz -C /tmp/SDL2-src --strip-components=1
 
+          # KMSDRM-Check erzwingen (findet sonst KMSDRM nicht ohne
+          # arm64-pkg-config und deaktiviert den Backend still)
           python3 - /tmp/SDL2-src/cmake/sdlchecks.cmake <<'PY'
           import sys, pathlib
           p = pathlib.Path(sys.argv[1]); t = p.read_text()
@@ -153,6 +186,9 @@ jobs:
           p.write_text(t)
           PY
 
+          # Pageflip-Patch: Mali-G31 meldet DRM_CAP_ASYNC_PAGE_FLIP,
+          # lehnt den Flip aber mit -EINVAL ab. Ohne Fallback fällt
+          # jeder Frame aus. SDL2-Issue #16174.
           python3 - /tmp/SDL2-src/src/video/kmsdrm/SDL_kmsdrmopengles.c <<'PY'
           import sys, re, pathlib
           p = pathlib.Path(sys.argv[1]); t = p.read_text()
@@ -188,21 +224,32 @@ jobs:
           cmake --build /tmp/sdl2-build -j "$JOBS"
           cmake --install /tmp/sdl2-build
 
+          # Verifikation
           aarch64-linux-gnu-strings "$SDL2_INSTALL/lib/libSDL2-2.0.so.0" | grep -q "Async pageflip rejected" \
             && echo "OK: Pageflip-Patch drin" \
             || { echo "FEHLER: Pageflip-Patch fehlt"; exit 1; }
 
-      # ── Stubs ────────────────────────────────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # Stubs (libmali, libdecor)
+      # ═══════════════════════════════════════════════════════════════
       - name: libmali.so.0-Stub + libdecor-Stub
         run: |
           set -e
           mkdir -p "$SYSROOT_LIB"
+
+          # Leerer Stub — erzeugt NEEDED-Eintrag, damit der dynamische
+          # Loader libmali.so.0 in die Laufzeit-Abhängigkeiten aufnimmt.
+          # Die echte libmali.so.0 wird auf ArkOS aus
+          # /usr/lib/aarch64-linux-gnu/ geladen (liefert EGL + GLESv2).
           aarch64-linux-gnu-gcc -shared -fPIC \
             -Wl,-soname,libmali.so.0 \
             -o "$SYSROOT_LIB/libmali.so.0" -x c - <<'EOF'
-          /* Leerer Stub – erzeugt NEEDED-Eintrag; die echte libmali.so.0
-             wird auf ArkOS aus /usr/lib/aarch64-linux-gnu/ geladen. */
+          /* Linker-Stub. Kein Code, keine Symbole. */
           EOF
+
+          # libdecor-Stub: Ubuntu 20.04 hat GLIBC 2.31, aber manche
+          # ArkOS-Builds erwarten GLIBC_2.32+-Symbole. Der Stub belegt
+          # nur zwei Symbole, die der Loader braucht.
           aarch64-linux-gnu-gcc -shared -fPIC \
             -Wl,-soname,libdecor-0.so.0 \
             -o "$SYSROOT_LIB/libdecor-0.so.0" -x c - <<'EOF'
@@ -210,17 +257,28 @@ jobs:
           void libdecor_unref(void) {}
           EOF
 
-      # ── Patches ──────────────────────────────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # Patches
+      # ═══════════════════════════════════════════════════════════════
       - name: gs.cpp patchen (GLES + Precision + NEON)
         run: |
           set -e
-          chmod +x patches/wots2-gles.py patches/wots2-gles-precision.py patches/wots2-neon.py
+          chmod +x patches/wots2-gles.py \
+                   patches/wots2-gles-precision.py \
+                   patches/wots2-neon.py
+
           python3 patches/wots2-gles.py src/hal/gs.cpp
           python3 patches/wots2-gles-precision.py src/hal/gs.cpp
           python3 patches/wots2-neon.py src/hal/gs.cpp
-          grep -c '#version 320 es' src/hal/gs.cpp
 
-      # ── CMake configure ─────────────────────────────────────────────
+          # Sanity: mindestens die 7 Shader müssen umgestellt sein
+          count=$(grep -c '#version 320 es' src/hal/gs.cpp || true)
+          echo "Shader umgestellt: $count"
+          [ "$count" -ge 7 ] || { echo "FEHLER: zu wenige Shader umgestellt"; exit 1; }
+
+      # ═══════════════════════════════════════════════════════════════
+      # CMake configure
+      # ═══════════════════════════════════════════════════════════════
       - name: CMake konfigurieren
         run: |
           set -e
@@ -231,14 +289,17 @@ jobs:
             -DSDL2_DIR="$SDL2_INSTALL/lib/cmake/SDL2" \
             -DCMAKE_PREFIX_PATH="$SDL2_INSTALL;$SYSROOT_LIB" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
             -DBUILD_SHARED_LIBS=OFF
 
-      # ── Build ────────────────────────────────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # Build
+      # ═══════════════════════════════════════════════════════════════
       - name: Bauen
         run: cmake --build build -j "$JOBS"
 
-      # ── Bundle ──────────────────────────────────────────────────────
+      # ═══════════════════════════════════════════════════════════════
+      # Bundle
+      # ═══════════════════════════════════════════════════════════════
       - name: Laufzeit-Libs sammeln und Bundle bauen
         run: |
           set -e
@@ -246,19 +307,24 @@ jobs:
           cp -L build/wots2 dist/wots2
           aarch64-linux-gnu-strip dist/wots2 || true
 
+          # SDL2 (mit Pageflip-Patch)
           cp -L "$SDL2_INSTALL/lib/libSDL2-2.0.so.0" dist/libs.aarch64/
+
+          # Abhängigkeiten (soweit vorhanden)
           for lib in libarchive.so.13 libz.so.1 libzstd.so.1 liblzma.so.5 \
                      libbz2.so.1.0 liblz4.so.1 libasound.so.2 libudev.so.1; do
             f=$(find /usr/lib/aarch64-linux-gnu -maxdepth 1 -name "${lib}*" | head -1)
             [ -n "$f" ] && cp -L "$f" dist/libs.aarch64/ || true
           done
 
+          # Launcher-Skript
           cat > dist/WOTS2.sh <<'LAUNCHER'
           #!/bin/sh
           DIR=$(dirname "$(readlink -f "$0")")
           export LD_LIBRARY_PATH="$DIR/libs.aarch64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           export SDL_VIDEODRIVER=kmsdrm
           export SDL_AUDIODRIVER=alsa
+          # RK3326: ein Governor für alle vier Kerne
           if [ -w /sys/devices/system/cpu/cpufreq/policy0/scaling_governor ]; then
             echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || true
           fi
@@ -266,11 +332,62 @@ jobs:
           LAUNCHER
           chmod +x dist/WOTS2.sh
 
+          echo "== dist/wots2:"
           file dist/wots2
+          echo "== NEEDED:"
           aarch64-linux-gnu-readelf -d dist/wots2 | grep NEEDED || true
 
-      - uses: actions/upload-artifact@v4
+      # ═══════════════════════════════════════════════════════════════
+      # Artefakt
+      # ═══════════════════════════════════════════════════════════════
+      - name: Upload Artefakt
+        uses: actions/upload-artifact@v4
         with:
           name: wots2-rk3326
           path: dist/
+          retention-days: 30
+
+      # ═══════════════════════════════════════════════════════════════
+      # Fehleranalyse (läuft immer, auch bei Build-Abbruch)
+      # ═══════════════════════════════════════════════════════════════
+      - name: Fehleranalyse sammeln
+        if: always()
+        run: |
+          set +e
+          {
+            echo "================================================================"
+            echo "BUILD-FEHLER-ANALYSE"
+            echo "================================================================"
+            echo "Datum: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            echo "== CMake-Version:"
+            cmake --version 2>/dev/null | head -1
+            echo ""
+            echo "== SDL2-Binary-Check:"
+            if [ -f "$SDL2_INSTALL/lib/libSDL2-2.0.so.0" ]; then
+              aarch64-linux-gnu-strings "$SDL2_INSTALL/lib/libSDL2-2.0.so.0" | \
+                grep -q "Async pageflip rejected" && echo "  OK: Pageflip-Patch" \
+                || echo "  FEHLT: Pageflip-Patch"
+            else
+              echo "  FEHLT: libSDL2-2.0.so.0"
+            fi
+            echo ""
+            echo "== Build-Artefakt:"
+            if [ -f dist/wots2 ]; then
+              file dist/wots2
+              aarch64-linux-gnu-readelf -d dist/wots2 | grep NEEDED || true
+            else
+              echo "  FEHLT: dist/wots2"
+            fi
+          } > build-error-analysis.txt
+          cp build-error-analysis.txt dist/ 2>/dev/null || true
+          cat build-error-analysis.txt
+
+      - name: Upload Fehleranalyse
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-analysis
+          path: build-error-analysis.txt
+          if-no-files-found: warn
           retention-days: 30
