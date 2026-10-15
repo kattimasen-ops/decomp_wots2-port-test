@@ -31,3 +31,12 @@ set(CMAKE_CXX_FLAGS_INIT "${_WOTS2_CPU} ${_WOTS2_OPT}")
 
 set(CMAKE_EXE_LINKER_FLAGS_INIT    "${_WOTS2_LD}")
 set(CMAKE_SHARED_LINKER_FLAGS_INIT "${_WOTS2_LD}")
+
+# ── Runtime-Robustheit (ArkOS / GLIBC 2.31) ──────────────────────────
+# NUR C++- und GCC-Runtime statisch einbinden.
+# libc.so.6 bleibt dynamisch → GLIBC 2.31 Kompatibilität zu ArkOS
+# bleibt unangetastet. Eliminiert lediglich GLIBCXX_*-Versionsfehler,
+# falls ArkOS eine andere libstdc++-Minorversion mitbringt.
+# ACHTUNG: kein '-static' — das würde die Binary unbrauchbar machen.
+set(CMAKE_EXE_LINKER_FLAGS_INIT
+    "${CMAKE_EXE_LINKER_FLAGS_INIT} -static-libstdc++ -static-libgcc")
