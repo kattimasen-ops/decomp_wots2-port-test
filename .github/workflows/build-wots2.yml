@@ -39,6 +39,7 @@ jobs:
       - name: Git Safe Directory
         run: git config --global --add safe.directory "*" || true
 
+      # ── REPO-STRUKTUR PRÜFEN ────────────────────────────────────────
       - name: Repo-Struktur prüfen
         run: |
           echo "== Root =="
@@ -52,6 +53,7 @@ jobs:
           echo "== include/native/ =="
           ls -la include/native/ || echo "(kein include/native/)"
 
+      # ── MULTIARCH ───────────────────────────────────────────────────
       - name: aarch64 Multiarch aktivieren
         run: |
           dpkg --add-architecture arm64
@@ -64,6 +66,7 @@ jobs:
             > /etc/apt/sources.list.d/arm64.list
           apt-get update
 
+      # ── CMAKE 3.28.3 ────────────────────────────────────────────────
       - name: CMake 3.28.3 installieren
         run: |
           apt-get install -y --no-install-recommends wget ca-certificates
@@ -75,6 +78,7 @@ jobs:
           rm cmake-3.28.3-linux-x86_64.tar.gz
           cmake --version
 
+      # ── NATIVE TOOLS ────────────────────────────────────────────────
       - name: Native Build-Tools installieren
         run: |
           apt-get install -y --no-install-recommends \
@@ -83,6 +87,7 @@ jobs:
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             unzip p7zip-full libarchive-tools zstd xz-utils
 
+      # ── AARCH64 DEV-PAKETE ──────────────────────────────────────────
       - name: aarch64 Dev-Pakete installieren
         run: |
           apt-get install -y --no-install-recommends \
@@ -102,15 +107,19 @@ jobs:
             libpulse-dev:arm64 \
             libxkbcommon-dev:arm64
 
+      # ── CROSS-SYSROOT ───────────────────────────────────────────────
       - name: Cross-Sysroot einrichten
         run: bash scripts/ci-setup-sysroot.sh
 
+      # ── SDL2 MIT KMSDRM-PAGEFLIP-PATCH ──────────────────────────────
       - name: SDL2 mit KMSDRM-Pageflip-Patch bauen
         run: bash scripts/ci-build-sdl2.sh
 
+      # ── STUBS (libmali, libdecor) ───────────────────────────────────
       - name: Stubs (libmali, libdecor)
         run: bash scripts/ci-build-stubs.sh
 
+      # ── PATCHES (Reihenfolge einhalten) ─────────────────────────────
       - name: Patches anwenden
         run: |
           set -euo pipefail
@@ -122,9 +131,11 @@ jobs:
             else echo ""; fi
           }
 
+          # ── gs.cpp: GLES 3.2 Shader-Version ─────────────────────────
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
+          # ── gs.cpp: mediump-Qualifier (optional) ────────────────────
           S=$(find_script wots2-gles-precision.py)
           if [ -n "$S" ]; then
             echo "== $S =="; python3 "$S" src/hal/gs.cpp
@@ -132,9 +143,11 @@ jobs:
             echo "  (wots2-gles-precision.py nicht gefunden — uebersprungen)"
           fi
 
+          # ── gs.cpp: NEON Vertex-Lerp + Frustum-Culling ──────────────
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
+          # ── gs.cpp: opt-in persistente Buffer ───────────────────────
           S=$(find_script wots2-persistent-buffers.py)
           if [ -n "$S" ]; then
             echo "== $S =="; python3 "$S" src/hal/gs.cpp
@@ -142,25 +155,50 @@ jobs:
             echo "  (wots2-persistent-buffers.py nicht gefunden — uebersprungen)"
           fi
 
+          # ── gs.cpp: glInvalidateFramebuffer (Depth + Post-FBO) ──────
           S=$(find_script wots2-gs-invalidate.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-invalidate.py nicht gefunden — uebersprungen)"
 
+          # ── gs.cpp: Shader-Cache + LRU-Unload (Halo-Effekt) ─────────
+          S=$(find_script wots2-gs-shader-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-shader-cache.py nicht gefunden — uebersprungen)"
+
+          # ── gs.cpp: 2D-Draw-Call-Batching ───────────────────────────
+          S=$(find_script wots2-gs-batch-2d.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-batch-2d.py nicht gefunden — uebersprungen)"
+
+          # ── gs.cpp: glTexStorage2D fuer FBO-Texturen ────────────────
+          S=$(find_script wots2-gs-tex-storage.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-tex-storage.py nicht gefunden — uebersprungen)"
+
+          # ── collision_world.cpp: NEON Apply + Towards + Distance ────
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
 
+          # ── collision_world.cpp: NEON Relative() ────────────────────
+          S=$(find_script wots2-collision-relative-neon.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; } \
+                    || echo "  (wots2-collision-relative-neon.py nicht gefunden — uebersprungen)"
+
+          # ── SDL2 KMSDRM Pageflip-Patch ──────────────────────────────
           S=$(find_script sdl2-pageflip.py)
           if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
             echo "== $S (SDL2-Tree) =="
             python3 "$S" "$SDL2_INSTALL/.." || true
           fi
 
+          # ── Default-Werte in port_options.h (Recommended-Preset) ────
           S=$(find_script patch_config_defaults.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (patch_config_defaults.py nicht gefunden — uebersprungen)"
 
           echo "== Patches fertig =="
 
+      # ── CMake konfigurieren ─────────────────────────────────────────
       - name: CMake konfigurieren
         run: |
           cmake -S . -B build -G Ninja \
@@ -172,9 +210,11 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_SHARED_LIBS=OFF
 
+      # ── BAUEN ───────────────────────────────────────────────────────
       - name: Bauen
         run: cmake --build build -j "$JOBS"
 
+      # ── BINARY-ABHÄNGIGKEITEN PROTOKOLLIEREN ────────────────────────
       - name: Binary-Abhängigkeiten protokollieren
         run: |
           set -euo pipefail
@@ -191,13 +231,15 @@ jobs:
           echo "== Erwartet: nur libc.so.6, libm.so.6, evtl. libEGL / libGLESv2 =="
           echo "== libstdc++ / libgcc_s dürfen NICHT mehr auftauchen =="
 
+      # ── STAGING ─────────────────────────────────────────────────────
       - name: Bundle vorbereiten
         run: |
           set -euo pipefail
           STAGE="$GITHUB_WORKSPACE/dist"
           rm -rf "$STAGE"
           mkdir -p "$STAGE/wots2/libs.aarch64" \
-                   "$STAGE/wots2/extracted"
+                   "$STAGE/wots2/extracted" \
+                   "$STAGE/wots2/shader_cache"
 
           install -m 755 build/wots2        "$STAGE/wots2/wots2"
           [ -f port.ini ] && install -m 644 port.ini "$STAGE/wots2/port.ini" || true
@@ -216,9 +258,15 @@ jobs:
           chmod 755 "$STAGE/WOTS2.sh" "$STAGE/wots2/wots2"
           [ -f "$STAGE/wots2/sdl_mapping.py" ] && chmod 755 "$STAGE/wots2/sdl_mapping.py" || true
 
+          # .gitkeep in den leeren Ordnern, damit sie im Tarball bleiben.
+          touch "$STAGE/wots2/extracted/.gitkeep" \
+                "$STAGE/wots2/shader_cache/.gitkeep" \
+                "$STAGE/wots2/libs.aarch64/.gitkeep"
+
           echo "== dist =="
           find "$STAGE" -maxdepth 3 -printf '  %M %8s  %p\n'
 
+      # ── TARBALL ─────────────────────────────────────────────────────
       - name: Tarball erzeugen
         run: |
           set -euo pipefail
@@ -230,6 +278,7 @@ jobs:
           tar -tzf wots2-rk3326.tar.gz | head -60
           ls -la
 
+      # ── ARTEFAKT ────────────────────────────────────────────────────
       - name: Upload Artefakt (Bundle)
         uses: actions/upload-artifact@v4
         with:
@@ -242,6 +291,7 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      # ── FEHLERANALYSE (immer) ───────────────────────────────────────
       - name: Fehleranalyse
         if: always()
         run: bash scripts/ci-error-report.sh || true
