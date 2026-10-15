@@ -117,7 +117,7 @@ if [ -n "$gpu_devfreq_path" ]; then
     fi
 fi
 
-# ── ZRAM mit lz4 (schneller als lzo auf dem A35) ─────────────────────
+# ── ZRAM mit lz4 (schneller als lzo auf dem Cortex-A35) ──────────────
 if ! swapon --show 2>/dev/null | grep -q zram; then
     modprobe zram 2>/dev/null || true
     if [ -e /dev/zram0 ]; then
@@ -187,7 +187,8 @@ mkdir -p /var/run/battery-saver 2>/dev/null && \
     touch /var/run/battery-saver/wots2.pause 2>/dev/null || true
 
 # ── SAVE-VERZEICHNISSE ───────────────────────────────────────────────
-mkdir -p "$GAMEDIR/wots2_card" "$GAMEDIR/save" "$GAMEDIR/screenshots" 2>/dev/null || true
+mkdir -p "$GAMEDIR/wots2_card" "$GAMEDIR/save" "$GAMEDIR/screenshots" \
+         "$GAMEDIR/shader_cache" 2>/dev/null || true
 
 # ── DRI-RECHTE ───────────────────────────────────────────────────────
 for node in /dev/dri/card0 /dev/dri/renderD128 /dev/fb0; do
@@ -249,18 +250,37 @@ export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 export WOTS2_NO_VSYNC=1
 export WOTS2_BUTTON_REMAP=1
 
-# Glibc-Allocator (1 GB RAM)
+# Glibc-Allocator (1 GB RAM): verhindert Page-Thrashing und Fragmentierung.
 export MALLOC_TRIM_THRESHOLD_=131072
 export MALLOC_MMAP_THRESHOLD_=131072
 
-# Mali-G31 DDK / AFBC
+# ── Mali-G31 DDK / AFBC / Shader-Cache ───────────────────────────────
+# AFBC (Arm Frame Buffer Compression) ist auf der G31 integriert. Ein
+# explizites Setzen hilft, wenn EGLConfig ohne die richtigen Attribute
+# gewählt wurde. MAX_ASYNC_BUFFER_COUNT=2 begrenzt den Async-Pool.
 export MALI_AFBC=1
 export MALI_MAX_ASYNC_BUFFER_COUNT=2
 export MALI_BUFFER_PREALLOC=1
 
+# Shader-Programm-Cache (Halo-Effekt: ~50 MB nach mehreren Levels).
+# Cache liegt in $GAMEDIR/shader_cache/. Treiber-Key (GL_VERSION+
+# GL_RENDERER) invalidiert den Cache nach einem Mali-Update automatisch.
+# LRU=N: Programme, die seit N Frames nicht gebunden wurden, werden via
+# glDeleteProgram freigegeben. 0 = aus.
+export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
+export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-600}"
+
+# 2D-Draw-Call-Batching (ARM: <500 Draw Calls pro Frame auf Mali).
+# Bei falscher Darstellung: WOTS2_NO_BATCH=1.
+export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
+
 # SDL2-Audio: groesserer Puffer, weniger Callback-Overhead.
 # WOTS2 ist Singleplayer — Latenz spielt keine Rolle, CPU-Last schon.
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
+
+# Optional: KMSDRM Double-Buffer (niedrigere Latenz, mehr CPU-Last).
+# WOTS2 hat 30-FPS-Logik; einschalten nur bei Input-Lag-Gefuehl.
+# export SDL_KMSDRM_DOUBLE_BUFFER=1
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
