@@ -1,63 +1,67 @@
 #!/usr/bin/env python3
 """
-Ersetzt glBufferData in draw-Pfaden durch persistent gemappte Buffer.
-Quelle: Halo CE Port host_gl.c, GL_EXT_buffer_storage.
+Opt-in: Persistente gemappte Buffer statt glBufferData.
+Nur aktiv mit WOTS2_PERSISTENT_BUFFERS=1.
+
+Python 3.6+ kompatibel.
 """
-import re, sys, pathlib
+import re
+import sys
+import pathlib
+
+
+HELPER = r'''
+// ── Persistente Buffer (opt-in) ─────────────────────────────────────
+static bool wots2_persistent_buffers_enabled(void) {
+    static int enabled = -1;
+    if (enabled < 0)
+        enabled = (getenv("WOTS2_PERSISTENT_BUFFERS") != nullptr) ? 1 : 0;
+    return enabled != 0;
+}
+'''
+
 
 def patch(path):
     p = pathlib.Path(path)
     t = p.read_text()
-    if 'wots2_persistent_init' in t:
-        print('  Persistent Buffers bereits vorhanden.')
+
+    if 'wots2_persistent_buffers_enabled' in t:
+        print('  Persistent-Buffer-Helper bereits vorhanden.')
         return
 
-    helper = '''
-// ── Persistent Mapped Buffers ────────────────────────────────────────────
-static bool wots2_has_extension(const char* name) {
-    static const char* ext = nullptr;
-    if (!ext) ext = (const char*)glGetString(GL_EXTENSIONS);
-    return ext && strstr(ext, name) != nullptr;
-}
+    last_inc = list(re.finditer(r'^#include [<"][^\n]+[>\"]\n', t, re.M))[-1]
+    t = t[:last_inc.end()] + HELPER + t[last_inc.end():]
 
-struct PersistentBuffer {
-    GLuint buffer = 0;
-    uint8_t* mapping = nullptr;
-    size_t capacity = 0;
-    bool ready = false;
-};
+    pattern = re.compile(
+        r'glBufferData\s*\(\s*GL_ARRAY_BUFFER\s*,\s*'
+        r'\(GLsizeiptr\)\(\(size_t\)c\.count\s*\*\s*sizeof\(Vertex3?\)\)\s*,\s*'
+        r'v\s*,\s*GL_STREAM_DRAW\s*\)\s*;')
+    matches = pattern.findall(t)
+    print('  glBufferData-Aufrufe gefunden: %d' % len(matches))
 
-static bool wots2_persistent_init(PersistentBuffer& pb, size_t size) {
-    if (pb.ready && pb.capacity >= size) return true;
-    if (!wots2_has_extension("GL_EXT_buffer_storage")) return false;
-    if (!pb.buffer) glGenBuffers(1, &pb.buffer);
-    glBindBuffer(GL_ARRAY_BUFFER, pb.buffer);
-    typedef void (*BufferStorageFn)(GLenum, GLsizeiptr, const void*, GLbitfield);
-    auto fn = (BufferStorageFn)SDL_GL_GetProcAddress("glBufferStorageEXT");
-    if (!fn) return false;
-    fn(GL_ARRAY_BUFFER, size, nullptr,
-       GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT);
-    pb.mapping = (uint8_t*)glMapBufferRange(GL_ARRAY_BUFFER, 0, size,
-       GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT);
-    if (!pb.mapping) return false;
-    pb.capacity = size;
-    pb.ready = true;
-    return true;
-}
+    if not matches:
+        p.write_text(t)
+        return
 
-static void wots2_persistent_upload(PersistentBuffer& pb, const void* data, size_t size) {
-    if (pb.ready && size <= pb.capacity) {
-        memcpy(pb.mapping, data, size);
-    } else {
-        glBindBuffer(GL_ARRAY_BUFFER, pb.buffer);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, size, data);
-    }
-}
-'''
-    last_inc = list(re.finditer(r'^#include [^\n]+\n', t, re.M))[-1]
-    t = t[:last_inc.end()] + helper + t[last_inc.end():]
+    def repl(match):
+        return (
+            'if (wots2_persistent_buffers_enabled()) {\n'
+            '        void* _map = glMapBufferRange(GL_ARRAY_BUFFER, 0, '
+            '(GLsizeiptr)((size_t)c.count * sizeof(Vertex3)), '
+            'GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT);\n'
+            '        if (_map) { memcpy(_map, v, (size_t)c.count * sizeof(Vertex3)); '
+            'glUnmapBuffer(GL_ARRAY_BUFFER); }\n'
+            '    } else {\n'
+            '        glBufferData(GL_ARRAY_BUFFER, '
+            '(GLsizeiptr)((size_t)c.count * sizeof(Vertex3)), v, GL_STREAM_DRAW);\n'
+            '    }')
+    t = pattern.sub(repl, t)
     p.write_text(t)
-    print('  Persistent-Buffer-Helfer eingefügt. Manuelle Verwendung in draw-Aufrufen nötig.')
+    print('  Persistent-Buffer-Pfad eingefügt (opt-in).')
+
 
 if __name__ == '__main__':
-    patch(sys.argv[1] if len(sys.argv) > 1 else 'src/hal/gs.cpp')
+    target = sys.argv[1] if len(sys.argv) > 1 else 'src/hal/gs.cpp'
+    print('Patche %s' % target)
+    patch(target)
+    print('Fertig.')
