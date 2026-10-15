@@ -1,0 +1,254 @@
+name: Build WOTS2 for RK3326
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    container: ubuntu:20.04
+    timeout-minutes: 120
+    defaults:
+      run: { shell: bash }
+
+    env:
+      SYSROOT_LIB: ${{ github.workspace }}/sysroot
+      SDL2_INSTALL: ${{ github.workspace }}/sdl2-install
+      DEBIAN_FRONTEND: noninteractive
+      PKG_CONFIG_PATH: ${{ github.workspace }}/sysroot/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
+      JOBS: "4"
+
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, submodules: false }
+
+      - name: aarch64-Multiarch aktivieren
+        run: |
+          set -e
+          dpkg --add-architecture arm64
+          cp /etc/apt/sources.list /etc/apt/sources.list.bak
+          sed -i -E 's/^deb (\[[^]]*\] )?http/deb [arch=amd64] http/' /etc/apt/sources.list
+          cat > /etc/apt/sources.list.d/arm64.list <<'EOF'
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main universe
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main universe
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main universe
+          EOF
+          apt-get update
+
+      - name: Native Build-Tools installieren
+        run: |
+          apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build git curl wget \
+            ca-certificates pkg-config python3 file patchelf \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
+
+      - name: aarch64-Dev-Pakete installieren
+        run: |
+          apt-get install -y --no-install-recommends \
+            libdrm-dev:arm64 libgbm-dev:arm64 \
+            libegl-dev:arm64 libgles2-mesa-dev:arm64 \
+            libasound2-dev:arm64 libudev-dev:arm64 \
+            libarchive-dev:arm64 zlib1g-dev:arm64 \
+            libbz2-dev:arm64 liblzma-dev:arm64 libzstd-dev:arm64 liblz4-dev:arm64 \
+            libwayland-dev:arm64
+
+      - name: Cross-Sysroot einrichten
+        run: |
+          set -e
+          mkdir -p /usr/aarch64-linux-gnu/lib
+          for pair in \
+              "libdrm.so.2:libdrm.so" \
+              "libgbm.so.1:libgbm.so" \
+              "libEGL.so.1:libEGL.so" \
+              "libGLESv2.so.2:libGLESv2.so"; do
+            tgt="/usr/lib/aarch64-linux-gnu/${pair%%:*}"
+            lnk="/usr/aarch64-linux-gnu/lib/${pair##*:}"
+            [ -e "$tgt" ] && ln -sf "$tgt" "$lnk" || { echo "FEHLT: $tgt"; exit 1; }
+          done
+
+          PC_DIR="$SYSROOT_LIB/pkgconfig"; mkdir -p "$PC_DIR"
+          cat > "$PC_DIR/egl.pc" <<'EOF'
+          prefix=/usr
+          libdir=/usr/aarch64-linux-gnu/lib
+          includedir=/usr/include
+          Name: egl
+          Description: EGL
+          Version: 1.5
+          Libs: -L${libdir} -lEGL
+          Cflags: -I${includedir}
+          EOF
+          cat > "$PC_DIR/glesv2.pc" <<'EOF'
+          prefix=/usr
+          libdir=/usr/aarch64-linux-gnu/lib
+          includedir=/usr/include
+          Name: glesv2
+          Description: OpenGL ES
+          Version: 3.2
+          Libs: -L${libdir} -lGLESv2
+          Cflags: -I${includedir}
+          EOF
+          cat > "$PC_DIR/libdrm.pc" <<'EOF'
+          prefix=/usr
+          libdir=/usr/aarch64-linux-gnu/lib
+          includedir=/usr/include/libdrm
+          Name: libdrm
+          Description: libdrm
+          Version: 2.4.110
+          Libs: -L${libdir} -ldrm
+          Cflags: -I${includedir}
+          EOF
+          cat > "$PC_DIR/gbm.pc" <<'EOF'
+          prefix=/usr
+          libdir=/usr/aarch64-linux-gnu/lib
+          includedir=/usr/include
+          Name: gbm
+          Description: gbm
+          Version: 21.2.6
+          Libs: -L${libdir} -lgbm
+          Cflags: -I${includedir}
+          EOF
+          for m in libdrm gbm egl glesv2; do
+            pkg-config --exists "$m" && echo "OK: $m $(pkg-config --modversion $m)"
+          done
+
+      - name: SDL2 mit KMSDRM-Pageflip-Patch für aarch64 bauen
+        run: |
+          set -e
+          SDL2_TAG=release-2.30.10
+          mkdir -p /tmp/SDL2-src
+          curl -fL --retry 3 -o /tmp/sdl2.tar.gz \
+            "https://github.com/libsdl-org/SDL/archive/refs/tags/${SDL2_TAG}.tar.gz"
+          tar -xzf /tmp/sdl2.tar.gz -C /tmp/SDL2-src --strip-components=1
+
+          python3 - /tmp/SDL2-src/cmake/sdlchecks.cmake <<'PY'
+          import sys, pathlib
+          p = pathlib.Path(sys.argv[1]); t = p.read_text()
+          t = t.replace(
+            '    if(PKG_KMSDRM_FOUND AND HAVE_OPENGL_EGL)',
+            '    set(PKG_KMSDRM_FOUND TRUE)\n    set(HAVE_OPENGL_EGL TRUE)\n    if(TRUE)', 1)
+          p.write_text(t)
+          PY
+
+          python3 - /tmp/SDL2-src/src/video/kmsdrm/SDL_kmsdrmopengles.c <<'PY'
+          import sys, re, pathlib
+          p = pathlib.Path(sys.argv[1]); t = p.read_text()
+          new = (
+            '    ret = KMSDRM_drmModePageFlip(viddata->drm_fd, dispdata->crtc->crtc_id,\n'
+            '        fb_info->fb_id, flip_flags, &windata->waiting_for_flip);\n'
+            '    if (ret != 0 && (flip_flags & DRM_MODE_PAGE_FLIP_ASYNC)) {\n'
+            '        viddata->async_pageflip_support = SDL_FALSE;\n'
+            '        flip_flags &= ~DRM_MODE_PAGE_FLIP_ASYNC;\n'
+            '        ret = KMSDRM_drmModePageFlip(viddata->drm_fd, dispdata->crtc->crtc_id,\n'
+            '            fb_info->fb_id, flip_flags, &windata->waiting_for_flip);\n'
+            '    }\n'
+            '    if (ret == 0) windata->waiting_for_flip = SDL_TRUE;\n'
+            '    else SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "Could not queue pageflip: %d", ret);')
+          pat = re.compile(
+            r'ret = KMSDRM_drmModePageFlip\(viddata->drm_fd, dispdata->crtc->crtc_id,\s*'
+            r'fb_info->fb_id, flip_flags, &windata->waiting_for_flip\);\s*'
+            r'if \(ret == 0\) \{\s*windata->waiting_for_flip = SDL_TRUE;\s*\} else \{\s*'
+            r'SDL_LogError\(SDL_LOG_CATEGORY_VIDEO, "Could not queue pageflip: %d", ret\);\s*\}')
+          t = pat.sub(new, t, count=1)
+          p.write_text(t)
+          PY
+
+          cmake -S /tmp/SDL2-src -B /tmp/sdl2-build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/aarch64-arkos.cmake \
+            -DCMAKE_INSTALL_PREFIX="$SDL2_INSTALL" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF \
+            -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_KMSDRM=ON \
+            -DSDL_OPENGL=OFF -DSDL_OPENGLES=ON \
+            -DSDL_PULSEAUDIO=OFF -DSDL_ALSA=ON
+          cmake --build /tmp/sdl2-build -j "$JOBS"
+          cmake --install /tmp/sdl2-build
+
+          aarch64-linux-gnu-strings "$SDL2_INSTALL/lib/libSDL2-2.0.so.0" | grep -q "Async pageflip rejected" \
+            && echo "OK: Pageflip-Patch drin" \
+            || { echo "FEHLER: Pageflip-Patch fehlt"; exit 1; }
+
+      - name: libmali.so.0-Stub + libdecor-Stub
+        run: |
+          set -e
+          mkdir -p "$SYSROOT_LIB"
+          aarch64-linux-gnu-gcc -shared -fPIC \
+            -Wl,-soname,libmali.so.0 \
+            -o "$SYSROOT_LIB/libmali.so.0" -x c - <<'EOF'
+          /* Leerer Stub – erzeugt NEEDED-Eintrag; die echte libmali.so.0
+             wird auf ArkOS aus /usr/lib/aarch64-linux-gnu/ geladen. */
+          EOF
+          aarch64-linux-gnu-gcc -shared -fPIC \
+            -Wl,-soname,libdecor-0.so.0 \
+            -o "$SYSROOT_LIB/libdecor-0.so.0" -x c - <<'EOF'
+          void libdecor_new(void) {}
+          void libdecor_unref(void) {}
+          EOF
+
+      - name: gs.cpp patchen (GLES + Precision + NEON + Persistent)
+        run: |
+          set -e
+          chmod +x patches/wots2-gles.py patches/wots2-gles-precision.py patches/wots2-neon.py patches/wots2-persistent-buffers.py
+          python3 patches/wots2-gles.py src/hal/gs.cpp
+          python3 patches/wots2-gles-precision.py src/hal/gs.cpp
+          python3 patches/wots2-neon.py src/hal/gs.cpp
+          python3 patches/wots2-persistent-buffers.py src/hal/gs.cpp
+          grep -c '#version 320 es' src/hal/gs.cpp
+
+      - name: CMake konfigurieren (GLES + alle Flags)
+        run: |
+          set -e
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/cmake/aarch64-arkos.cmake \
+            -DWOTS2_GLES=ON \
+            -DSDL2_DIR="$SDL2_INSTALL/lib/cmake/SDL2" \
+            -DCMAKE_PREFIX_PATH="$SDL2_INSTALL;$SYSROOT_LIB" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLibArchive_LIBRARY=$(find /usr/lib/aarch64-linux-gnu -name 'libarchive.so*' | head -1)
+
+      - name: Bauen
+        run: cmake --build build -j "$JOBS"
+
+      - name: Laufzeit-Libs sammeln und Bundle bauen
+        run: |
+          set -e
+          mkdir -p dist/libs.aarch64
+          cp -L build/wots2 dist/wots2
+          aarch64-linux-gnu-strip dist/wots2 || true
+
+          cp -L "$SDL2_INSTALL/lib/libSDL2-2.0.so.0" dist/libs.aarch64/
+          for lib in libarchive.so.13 libz.so.1 libzstd.so.1 liblzma.so.5 \
+                     libbz2.so.1.0 liblz4.so.1 libssl.so.1.1 libcrypto.so.1.1 \
+                     libasound.so.2 libudev.so.1; do
+            f=$(find /usr/lib/aarch64-linux-gnu -maxdepth 1 -name "${lib}*" | head -1)
+            [ -n "$f" ] && cp -L "$f" dist/libs.aarch64/ || true
+          done
+
+          cat > dist/WOTS2.sh <<'LAUNCHER'
+          #!/bin/sh
+          DIR=$(dirname "$(readlink -f "$0")")
+          export LD_LIBRARY_PATH="$DIR/libs.aarch64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export SDL_VIDEODRIVER=kmsdrm
+          export SDL_AUDIODRIVER=alsa
+          if [ -w /sys/devices/system/cpu/cpufreq/policy0/scaling_governor ]; then
+            echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || true
+          fi
+          exec "$DIR/wots2" "$@"
+          LAUNCHER
+          chmod +x dist/WOTS2.sh
+
+          file dist/wots2
+          aarch64-linux-gnu-readelf -d dist/wots2 | grep NEEDED || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wots2-rk3326
+          path: dist/
+          retention-days: 30
