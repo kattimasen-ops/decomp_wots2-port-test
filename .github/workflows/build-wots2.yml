@@ -50,6 +50,8 @@ jobs:
           ls -la scripts/ || echo "(kein scripts/)"
           echo "== cmake/ =="
           ls -la cmake/ || echo "(kein cmake/)"
+          echo "== include/native/ =="
+          ls -la include/native/ || echo "(kein include/native/)"
 
       # ── MULTIARCH ───────────────────────────────────────────────────
       - name: aarch64 Multiarch aktivieren
@@ -129,50 +131,52 @@ jobs:
             else echo ""; fi
           }
 
+          # ── gs.cpp: GLES 3.2 Shader-Version ─────────────────────────
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
+          # ── gs.cpp: mediump-Qualifier (optional) ────────────────────
           S=$(find_script wots2-gles-precision.py)
           if [ -n "$S" ]; then
             echo "== $S =="; python3 "$S" src/hal/gs.cpp
           else
-            echo "  (wots2-gles-precision.py nicht gefunden — übersprungen)"
+            echo "  (wots2-gles-precision.py nicht gefunden — uebersprungen)"
           fi
 
+          # ── gs.cpp: NEON Vertex-Lerp + Frustum-Culling ──────────────
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
+          # ── gs.cpp: opt-in persistente Buffer ───────────────────────
           S=$(find_script wots2-persistent-buffers.py)
           if [ -n "$S" ]; then
             echo "== $S =="; python3 "$S" src/hal/gs.cpp
           else
-            echo "  (wots2-persistent-buffers.py nicht gefunden — übersprungen)"
+            echo "  (wots2-persistent-buffers.py nicht gefunden — uebersprungen)"
           fi
 
+          # ── gs.cpp: glInvalidateFramebuffer am Frame-Ende ───────────
+          S=$(find_script wots2-gs-invalidate.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-invalidate.py nicht gefunden — uebersprungen)"
+
+          # ── collision_world.cpp: NEON Apply + Towards + Distance ────
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
 
+          # ── SDL2 KMSDRM Pageflip-Patch ──────────────────────────────
           S=$(find_script sdl2-pageflip.py)
           if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
             echo "== $S (SDL2-Tree) =="
             python3 "$S" "$SDL2_INSTALL/.." || true
           fi
 
+          # ── Default-Werte in port_options.h (Recommended-Preset) ────
           S=$(find_script patch_config_defaults.py)
-          if [ -n "$S" ]; then
-            echo "== $S =="; python3 "$S" .
-          else
-            echo "  (patch_config_defaults.py nicht gefunden — übersprungen)"
-          fi
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
+                    || echo "  (patch_config_defaults.py nicht gefunden — uebersprungen)"
 
-          S=$(find_script patch_config_changes.py)
-          if [ -n "$S" ]; then
-            echo "== $S =="; python3 "$S" .
-          else
-            echo "  (patch_config_changes.py nicht gefunden — übersprungen)"
-          fi
-
-          echo "== Alle Patches angewendet =="
+          echo "== Patches fertig =="
 
       # ── CMake konfigurieren ─────────────────────────────────────────
       - name: CMake konfigurieren
