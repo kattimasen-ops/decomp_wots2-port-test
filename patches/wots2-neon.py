@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Ersetzt heiße Skalar-Schleifen in src/hal/gs.cpp durch NEON.
+"""
+Ersetzt heiße Skalar-Schleifen in src/hal/gs.cpp durch NEON.
 
-WICHTIG: Die Helper-Funktionen referenzieren Vertex und Vertex3.
-Sie dürfen deshalb erst NACH deren Struktur-Definitionen eingefügt
-werden. Der Anker ist die Zeile:
+Enthält:
+  1. wots2_lerp_vertex  — Vertex-Interpolation (2D)
+  2. wots2_lerp_vertex3 — Vertex3-Interpolation (3D)
+  3. wots2_box_outside  — Frustum-Culling
 
-    struct Vertex3 { float x, y, z, u, v, r, g, b, a; };
+Die Lerp-Helper sind mit Interleaving geschrieben: die Ladeoperationen
+werden zwischen die Berechnungen gezogen, damit der in-order Cortex-A35
+seine Pipeline füllen kann (1 Load/Store-Port).
 
-Damit stehen beide Strukturen (Vertex weiter oben, Vertex3 hier)
-bereit, bevor die Helper sie benutzen.
+Python 3.6+ kompatibel (keine PEP-585-Typhinweise).
 """
 import re
 import sys
@@ -18,10 +21,8 @@ import pathlib
 NEON_HELPER = r'''
 
 // ── NEON-Helfer (aarch64) ─────────────────────────────────────────────
-// Quelle: ARM NEON Intrinsics Reference
-//   https://developer.arm.com/architectures/instruction-sets/intrinsics/
-// Cortex-A35: 2 NEON-Lanes parallel, in-order, ein Load/Store-Port.
-// vmlaq_f32 ist eine Single-Instruction-Multiply-Add (kein extra mul).
+// Cortex-A35: in-order Pipeline, ein Load/Store-Port. Die Ladebefehle
+// sind zwischen die Berechnungen gezogen (Interleaving).
 #include <arm_neon.h>
 
 static inline void wots2_lerp_vertex(const Vertex& a, const Vertex& b, float t, Vertex& o) {
@@ -30,8 +31,14 @@ static inline void wots2_lerp_vertex(const Vertex& a, const Vertex& b, float t, 
     const float* pa = reinterpret_cast<const float*>(&a);
     const float* pb = reinterpret_cast<const float*>(&b);
     float*       po = reinterpret_cast<float*>(&o);
-    vst1q_f32(po,     vmlaq_f32(vmulq_f32(vld1q_f32(pa),     v1mt), vld1q_f32(pb),     vt));
-    vst1q_f32(po + 4, vmlaq_f32(vmulq_f32(vld1q_f32(pa + 4), v1mt), vld1q_f32(pb + 4), vt));
+    const float32x4_t a0 = vld1q_f32(pa);
+    const float32x4_t b0 = vld1q_f32(pb);
+    const float32x4_t r0 = vmlaq_f32(vmulq_f32(a0, v1mt), b0, vt);
+    const float32x4_t a1 = vld1q_f32(pa + 4);
+    const float32x4_t b1 = vld1q_f32(pb + 4);
+    vst1q_f32(po, r0);
+    const float32x4_t r1 = vmlaq_f32(vmulq_f32(a1, v1mt), b1, vt);
+    vst1q_f32(po + 4, r1);
 }
 
 static inline void wots2_lerp_vertex3(const Vertex3& a, const Vertex3& b, float t, Vertex3& o) {
@@ -40,8 +47,14 @@ static inline void wots2_lerp_vertex3(const Vertex3& a, const Vertex3& b, float 
     const float* pa = reinterpret_cast<const float*>(&a);
     const float* pb = reinterpret_cast<const float*>(&b);
     float*       po = reinterpret_cast<float*>(&o);
-    vst1q_f32(po,     vmlaq_f32(vmulq_f32(vld1q_f32(pa),     v1mt), vld1q_f32(pb),     vt));
-    vst1q_f32(po + 4, vmlaq_f32(vmulq_f32(vld1q_f32(pa + 4), v1mt), vld1q_f32(pb + 4), vt));
+    const float32x4_t a0 = vld1q_f32(pa);
+    const float32x4_t b0 = vld1q_f32(pb);
+    const float32x4_t r0 = vmlaq_f32(vmulq_f32(a0, v1mt), b0, vt);
+    const float32x4_t a1 = vld1q_f32(pa + 4);
+    const float32x4_t b1 = vld1q_f32(pb + 4);
+    vst1q_f32(po, r0);
+    const float32x4_t r1 = vmlaq_f32(vmulq_f32(a1, v1mt), b1, vt);
+    vst1q_f32(po + 4, r1);
     po[8] = pa[8] + (pb[8] - pa[8]) * t;
 }
 
@@ -87,18 +100,13 @@ def patch(path):
         print('  NEON bereits vorhanden — überspringe.')
         return
 
-    # Anker: die Zeile, in der Vertex3 definiert wird. Danach einfügen.
-    anchor_re = re.compile(
-        r'struct\s+Vertex3\s*\{[^}]*\};\s*\n'
-    )
+    anchor_re = re.compile(r'struct\s+Vertex3\s*\{[^}]*\};\s*\n')
     m = anchor_re.search(t)
     if not m:
         print('  FEHLER: struct Vertex3 nicht gefunden.', file=sys.stderr)
         sys.exit(1)
-
     t = t[:m.end()] + NEON_HELPER + t[m.end():]
 
-    # ── verts2(): die 8-Zeilen-Lerp-Schleife ersetzen ────────────────
     old_v2 = re.compile(
         r'(o\.x = mix\(a\[i\]\.x, o\.x, t\); o\.y = mix\(a\[i\]\.y, o\.y, t\);\s*'
         r'o\.r = mix\(a\[i\]\.r, o\.r, t\); o\.g = mix\(a\[i\]\.g, o\.g, t\);\s*'
@@ -108,7 +116,6 @@ def patch(path):
         'wots2_lerp_vertex(a[i], s_tmp2[(size_t)i], t, s_tmp2[(size_t)i]);',
         t)
 
-    # ── verts3(): die 9-Zeilen-Lerp-Schleife ersetzen ────────────────
     old_v3 = re.compile(
         r'(o\.x = mix\(a\[i\]\.x, o\.x, t\); o\.y = mix\(a\[i\]\.y, o\.y, t\); o\.z = mix\(a\[i\]\.z, o\.z, t\);\s*'
         r'if \(c\.lerpUv\) \{ o\.u = mix\(a\[i\]\.u, o\.u, t\); o\.v = mix\(a\[i\]\.v, o\.v, t\); \}\s*'
@@ -119,7 +126,6 @@ def patch(path):
         'wots2_lerp_vertex3(a[i], s_tmp3[(size_t)i], t, s_tmp3[(size_t)i]);',
         t)
 
-    # ── box_outside(): kompletten Funktionskörper ersetzen ───────────
     old_box = re.compile(
         r'static\s+bool\s+box_outside\s*\(\s*const\s+float\s*\*\s*lo\s*,\s*'
         r'const\s+float\s*\*\s*hi\s*,\s*const\s+float\s*\*\s*m\s*,\s*float\s+xscale\s*\)'
@@ -133,10 +139,12 @@ def patch(path):
         t)
 
     p.write_text(t)
-    print(f'  NEON-Helper eingefügt nach struct Vertex3.')
-    print(f'  verts2: {n2} Stelle(n), verts3: {n3} Stelle(n), '
-          f'box_outside: {nbox} Stelle(n) gepatcht.')
+    print('  NEON-Helper eingefügt (mit Interleaving).')
+    print('  verts2: %d, verts3: %d, box_outside: %d gepatcht.' % (n2, n3, nbox))
 
 
 if __name__ == '__main__':
-    patch(sys.argv[1] if len(sys.argv) > 1 else 'src/hal/gs.cpp')
+    target = sys.argv[1] if len(sys.argv) > 1 else 'src/hal/gs.cpp'
+    print('Patche %s' % target)
+    patch(target)
+    print('Fertig.')
