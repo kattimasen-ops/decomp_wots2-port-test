@@ -19,10 +19,10 @@ python3 "$GITHUB_WORKSPACE/patches/sdl2-force-kmsdrm.py" \
 python3 "$GITHUB_WORKSPACE/patches/sdl2-pageflip.py" \
     "$SRC/src/video/kmsdrm/SDL_kmsdrmopengles.c"
 
-# Verifikation: Patch im Quellcode?
+# Verifikation im Quellcode (kein SIGPIPE-Problem, da Datei)
 if ! grep -q "Async pageflip rejected" \
      "$SRC/src/video/kmsdrm/SDL_kmsdrmopengles.c"; then
-    echo "FEHLER: Pageflip-Patch nicht angekommen."
+    echo "FEHLER: Pageflip-Patch nicht im Quellcode."
     exit 1
 fi
 echo "OK: Patch im Quellcode."
@@ -43,7 +43,7 @@ cmake --install "$BUILD"
 echo "== SDL2 lib-Verzeichnis:"
 ls -la "$SDL2_INSTALL/lib/"
 
-# Robuster Finder: egal ob libSDL2.so, libSDL2-2.0.so.0 oder versioniert
+# Robuster Finder
 SDL2_LIB=$(find "$SDL2_INSTALL/lib" -maxdepth 1 \( -name "libSDL2*.so*" \) | head -n 1)
 if [ -z "$SDL2_LIB" ]; then
     echo "FEHLER: keine libSDL2*.so*-Datei gefunden."
@@ -51,11 +51,13 @@ if [ -z "$SDL2_LIB" ]; then
 fi
 echo "Gefunden: $SDL2_LIB"
 
-if aarch64-linux-gnu-strings "$SDL2_LIB" | grep -q "Async pageflip rejected"; then
+# grep -c statt grep -q: liest die ganze Pipe, kein SIGPIPE an strings
+COUNT=$(aarch64-linux-gnu-strings "$SDL2_LIB" | grep -c "Async pageflip rejected" || true)
+if [ "$COUNT" -gt 0 ]; then
     echo "OK: Pageflip-Patch im Binary."
 else
     echo "FEHLER: Pageflip-Patch nicht im Binary."
-    echo "== pageflip-Strings im Binary:"
+    echo "== pageflip-Strings:"
     aarch64-linux-gnu-strings "$SDL2_LIB" | grep -i pageflip || true
     exit 1
 fi
