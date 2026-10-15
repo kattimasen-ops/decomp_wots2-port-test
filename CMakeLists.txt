@@ -11,6 +11,13 @@ if(WIN32)
     add_compile_definitions(GetThreadId=Ps2_GetThreadId)
 endif()
 
+# ── OpenGL ES 3.2 für Mali-G31 (RK3326) ──────────────────────────────────────
+# Ohne WOTS2_GLES wird Desktop-OpenGL 3.3 gebaut (Standard für x86_64).
+# Mit WOTS2_GLES=ON wird gegen EGL + GLESv2 gelinkt und ImGui auf das
+# OpenGL-ES-3-Backend umgestellt. Das ist der Pfad für den M9 Pro.
+option(WOTS2_GLES "Build for OpenGL ES 3.2 (Mali-G31)" OFF)
+
+# ── SDL2 ─────────────────────────────────────────────────────────────────────
 find_package(SDL2 QUIET)
 if(NOT SDL2_FOUND)
     find_package(PkgConfig REQUIRED)
@@ -21,7 +28,31 @@ if(NOT SDL2_FOUND)
     target_link_libraries(SDL2::SDL2 INTERFACE ${SDL2_LIBRARIES})
     add_library(SDL2::SDL2main ALIAS SDL2::SDL2)
 endif()
-find_package(OpenGL REQUIRED)
+
+# ── OpenGL / OpenGL ES ───────────────────────────────────────────────────────
+if(WOTS2_GLES)
+    # Mali-G31: EGL + GLESv2 aus dem Cross-Sysroot. Der Linker findet
+    # libGLESv2.so und libEGL.so durch /usr/aarch64-linux-gnu/lib.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(EGL   REQUIRED egl)
+    pkg_check_modules(GLES2 REQUIRED glesv2)
+    add_library(OpenGL::GL INTERFACE IMPORTED)
+    target_include_directories(OpenGL::GL INTERFACE
+        ${EGL_INCLUDE_DIRS} ${GLES2_INCLUDE_DIRS})
+    target_link_libraries(OpenGL::GL INTERFACE
+        ${EGL_LIBRARIES} ${GLES2_LIBRARIES})
+    add_compile_definitions(WOTS2_GLES=1)
+    set(IMGUI_GL_BACKEND
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengles3.cpp)
+    set(IMGUI_GL_DEFS IMGUI_IMPL_OPENGL_ES3)
+    message(STATUS "WOTS2: building for OpenGL ES 3.2 (Mali-G31)")
+else()
+    find_package(OpenGL REQUIRED)
+    set(IMGUI_GL_BACKEND
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+    set(IMGUI_GL_DEFS "")
+    message(STATUS "WOTS2: building for Desktop OpenGL")
+endif()
 
 # ── HAL (PS2 hardware abstraction) ────────────────────────────────────────────
 add_library(hal STATIC
@@ -164,10 +195,13 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui_tables.cpp
     ${imgui_SOURCE_DIR}/imgui_widgets.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${IMGUI_GL_BACKEND}
 )
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_link_libraries(imgui PUBLIC SDL2::SDL2)
+if(IMGUI_GL_DEFS)
+    target_compile_definitions(imgui PRIVATE ${IMGUI_GL_DEFS})
+endif()
 target_link_libraries(native PRIVATE imgui)
 
 # ── xxHash (XXH3), for texture packs made for PCSX2 (named by its hashes) ────
@@ -200,8 +234,13 @@ elseif(APPLE)
     # The game's memory sits at its PS2 addresses, from 1 MB up: the zero page
     # must end below that (by default it covers the first 4 GB).
     target_link_libraries(wots2 PRIVATE game native game native hal imgui -Wl,-pagezero_size,0x10000)
+elseif(WOTS2_GLES)
+    # Mali-G31 / RK3326: EGL + GLESv2, kein Desktop-GL.
+    target_link_libraries(wots2 PRIVATE -Wl,--start-group game native -Wl,--end-group hal imgui
+        SDL2::SDL2main ${CMAKE_DL_LIBS})
 else()
-    target_link_libraries(wots2 PRIVATE -Wl,--start-group game native -Wl,--end-group hal imgui SDL2::SDL2main ${CMAKE_DL_LIBS})
+    target_link_libraries(wots2 PRIVATE -Wl,--start-group game native -Wl,--end-group hal imgui
+        SDL2::SDL2main ${CMAKE_DL_LIBS})
 endif()
 
 # ── Mods (mods/<name>/<name>.cpp → mods/<name>/<name>.so, beside its mod.ini) ──
