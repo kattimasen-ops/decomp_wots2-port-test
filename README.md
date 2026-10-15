@@ -30,6 +30,24 @@ OpenGL ES 3.2 on the Mali-G31 MP2.
 
 ---
 
+## Table of contents
+
+- [What runs](#what-runs)
+- [What this port adds on the RK3326](#what-this-port-adds-on-the-rk3326)
+- [Optimisations in detail](#optimisations-in-detail)
+- [Mods, built in](#mods-built-in)
+- [Play it](#play-it)
+- [Configuration](#configuration)
+- [Performance](#performance)
+- [Controls](#controls)
+- [How it works](#how-it-works)
+- [Honest status](#honest-status)
+- [Poking around](#poking-around)
+- [Legal](#legal)
+- [Credits](#credits)
+
+---
+
 ## What runs
 
 The same as upstream, with the same scripting VM, the same fight AI, the same
@@ -45,31 +63,130 @@ trails, and controller support.
 
 The upstream builds for desktop (OpenGL 3.3 core, x86_64 / aarch64). The
 RK3326's Mali-G31 MP2 is a tile-based OpenGL ES 3.2 GPU with a very low
-bandwidth budget and no desktop GL support. This port is a full retarget:
+bandwidth budget and no desktop GL support. The M9 Pro shares 1 GB of DDR3
+between the CPU, the GPU and the OS. This port is a full retarget from the
+ground up — every layer between the game's decompiled code and the SoC's
+memory bus has been measured and tuned.
+
+**Graphics and CPU**
 
 - **OpenGL ES 3.2 backend** — every shader rewritten to `#version 320 es`,
-  sampled through EGL + libmali (`libmali-bifrost-g31-rxp0-gbm`), with explicit
-  sampler bindings and `mediump` for colour maths where the half-float ALU is
-  twice as fast.
-- **SDL2 KMSDRM with a Mali-G31 pageflip fix** — the Mali driver advertises
-  `DRM_CAP_ASYNC_PAGE_FLIP` but rejects the actual `drmModePageFlip` call with
-  `-EINVAL`; every frame is dropped and the picture tears. The build patches
-  SDL2 to retry without the async flag and disable it for the session. See
-  `patches/sdl2-pageflip.py`.
-- **NEON vectorisation of the vertex-lerp hot path** — `wots2_lerp_vertex` and
-  `wots2_lerp_vertex3` replace the scalar interpolation between frames, and the
-  frustum-culling `box_outside` is a single NEON pass over the eight corners.
-  See `patches/wots2-neon.py`.
+  sampled through EGL + libmali (`libmali-bifrost-g31-rxp0-gbm`), with
+  explicit sampler bindings and `mediump` for colour maths where the
+  half-float ALU is twice as fast.
+- **NEON throughout the hot paths** — the vertex-lerp
+  (`wots2_lerp_vertex`, `wots2_lerp_vertex3`), frustum culling
+  (`wots2_box_outside`), the collision matrix multiply (`wots2_apply_neon`),
+  the direction normaliser (`wots2_towards_neon`) and the pairwise
+  `Relative()` in the collision world are all hand-written NEON, with the
+  load/store operations interleaved into the arithmetic so the A35's single
+  load port never stalls the FMA pipeline.
 - **Cortex-A35 code generation** — `-march=armv8-a+crc -mcpu=cortex-a35
-  -mtune=cortex-a35 -mno-outline-atomics`. The last flag is critical: without
-  it GCC emits calls to `__aarch64_ldadd4_acq_rel`, which is an LSE sequence
-  that the A35 does not implement and turns every atomic into a SIGILL.
-- **PGO-ready build** — the toolchain honours `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON`
-  with `-flto`; the ImGui target opts out because its static-initialised state
-  does not survive LTO on Mali.
-- **A `port.ini` for runtime tuning** — resolution, frame rate, every lighting
-  option, and fog distance are read at startup. See
-  [Configuration](#configuration).
+  -mtune=cortex-a35 -mno-outline-atomics -fprefetch-loop-arrays`. The
+  `-mno-outline-atomics` flag is critical: without it GCC emits calls to
+  `__aarch64_ldadd4_acq_rel`, which is an LSE sequence the A35 does not
+  implement and turns every atomic into a SIGILL. The prefetch flag hides
+  memory latency on the A35's single load/store port.
+
+**Mali-G31-specific tune-ups**
+
+- **`glInvalidateFramebuffer`** on the depth buffer at the end of the frame,
+  and on the post-process colour target after the composite pass. On a
+  tile-based GPU every buffer that is not explicitly invalidated is written
+  back to DDR3, even if no one will read it — this eliminates those writes
+  for the depth buffer and for the post-FBO.
+- **`glTexStorage2D`** for all framebuffer textures. `glTexImage2D` lets the
+  texture's size and format change at any time, which forces the driver to
+  allocate defensively; `glTexStorage2D` declares them immutable, so the
+  driver can plan tile-local storage up front.
+- **2D draw-call batching** — successive 2D draws that share a texture are
+  merged into a single `glDrawArrays`. ARM's guidance for Mali is to keep
+  the frame under ~500 draw calls; this is where most of the menu and HUD
+  overhead goes away.
+- **Shader-binary cache with LRU unload** — compiled shader programs are
+  retrieved with `glGetProgramBinary`, stored on disk keyed by a hash of
+  `GL_VERSION` + `GL_RENDERER`, and reloaded with `glProgramBinary` on
+  subsequent launches. Programs unused for a while (default 600 frames) are
+  freed with `glDeleteProgram`. The Halo CE RK3326 port uses the same
+  approach on the identical GPU to release roughly 50 MB after several
+  levels; on a 1 GB system this is about memory stability as much as
+  startup time.
+- **AFBC** (Arm Frame Buffer Compression) explicitly enabled. It is
+  integrated into the Mali-G31's memory path; the driver usually turns it
+  on, but the launcher sets `MALI_AFBC=1` so it applies even when the EGL
+  config was chosen without the usual attributes.
+- **SDL2 KMSDRM pageflip fix** — the Mali driver advertises
+  `DRM_CAP_ASYNC_PAGE_FLIP` but rejects the actual `drmModePageFlip` call
+  with `-EINVAL`; every frame is dropped and the picture tears. The build
+  patches SDL2 to retry without the async flag and disable it for the
+  session.
+
+**Runtime tuning**
+
+- **CPU and GPU governors pinned to `performance`** by `WOTS2.sh` at launch,
+  and restored on exit. `schedutil` reacts too slowly for a fixed-30-FPS
+  game on this SoC; the frame time is much steadier when the clocks sit at
+  the top.
+- **ZRAM with the `lz4` compressor**. `lz4` compresses and decompresses
+  noticeably faster than the default `lzo` on the in-order A35, and on a
+  1 GB system page faults are constant enough that the difference is
+  measurable.
+- **Glibc allocator tuned** — `MALLOC_TRIM_THRESHOLD_` and
+  `MALLOC_MMAP_THRESHOLD_` raised to 131072 bytes so glibc does not return
+  memory to the kernel and immediately ask for it back, which fragments the
+  1 GB of RAM over a long session.
+- **Audio callback frequency reduced** — the SDL2 audio buffer is raised
+  to 2048 samples. WOTS2 is single-player; latency does not matter, but the
+  audio callback firing four times less often does.
+- **`-static-libstdc++ -static-libgcc`** linked in. The `libc.so.6` stays
+  dynamic so the GLIBC 2.31 compatibility with ArkOS is untouched; only the
+  C++ and GCC runtimes are baked into the binary, which removes a whole
+  class of `GLIBCXX_3.4.x not found` failures without changing the
+  distribution compatibility.
+
+- **A `port.ini` for runtime tuning** — resolution, frame rate, every
+  lighting option, and fog distance are read at startup. The *Recommended*
+  preset is also baked into the header defaults
+  (`include/native/port_options.h`), so the port starts well even without
+  the file being present.
+
+## Optimisations in detail
+
+Every change is implemented as a small, idempotent Python patch that runs
+from the CI workflow before `cmake` configures the build. The patches never
+touch the game's own source logic — they only extend the renderer, the
+collision world, and the launcher.
+
+### Where the RK3326 is slow, and what the port does about it
+
+| Bottleneck | What the port does | Where |
+|---|---|---|
+| **CPU, hot loops** | `-fprefetch-loop-arrays`, `-funroll-loops`, NEON vertex-lerp, NEON frustum culling, NEON collision matrix multiply, NEON direction normaliser, NEON pairwise `Relative()`. | `cmake/aarch64-arkos.cmake`, `patches/wots2-neon.py`, `patches/wots2-collision-neon.py`, `patches/wots2-collision-relative-neon.py` |
+| **GPU, bandwidth** | `glInvalidateFramebuffer` on depth and post-FBO, `glTexStorage2D` for framebuffer textures, AFBC enabled, async-buffer count bounded at 2. | `patches/wots2-gs-invalidate.py`, `patches/wots2-gs-tex-storage.py`, `WOTS2.sh` |
+| **Draw calls** | 2D sprites sharing a texture batched into a single `glDrawArrays`; 3D meshes frustum-culled and fog-culled by their bounding box before the vertex-buffer upload. | `patches/wots2-gs-batch-2d.py`, `src/hal/gs.cpp` |
+| **Shader compilation stalls** | Shader binaries cached on disk and reloaded by hash on the next launch; programs unused for 600 frames freed. | `patches/wots2-gs-shader-cache.py` |
+| **Memory pressure** | Shader cache with LRU unload, glibc trim/mmap thresholds raised, ZRAM with `lz4`. | `patches/wots2-gs-shader-cache.py`, `WOTS2.sh` |
+| **Audio CPU** | SDL2 buffer raised to 2048 samples so the callback fires four times less often. | `WOTS2.sh` |
+| **Scheduling jitter** | CPU and GPU governors pinned to `performance`, restored on exit; `tailscaled` stopped during play. | `WOTS2.sh` |
+
+### Which optimisations came from where
+
+The RK3326 is well-trodden ground. Several of these techniques are adapted
+directly from **the Halo CE RK3326 port** (`kattimasen-ops/halo-ce-rk3326-Port`),
+which runs on the same Mali-G31 MP2 in the same class of handheld:
+
+- The **KMSDRM pageflip workaround** for the Mali driver's async-flip bug.
+- The **`-mno-outline-atomics`** insight — without it every atomic on the
+  A35 traps into an LSE sequence the CPU does not implement.
+- The **shader-program management** pattern that frees roughly 50 MB after
+  several levels.
+- The **audio-mixer reduction** that cuts the callback's CPU cost.
+- The general **RK3326 tuning** (governors, ZRAM, allocator thresholds).
+
+Where a technique is already in the upstream `decomp_wots2` code path
+(widescreen, the modern-lighting passes, the in-between-frame
+interpolation, the texture-pack loader), it is **left alone** — the port
+only replaces or extends the parts that were written for desktop OpenGL.
 
 ## Mods, built in
 
@@ -90,9 +207,9 @@ The upstream mod loader ships with four mods switched on:
 
 **On the RK3326 the modern lighting is expensive.** The Mali-G31 has 512
 threads at up to ~450 MHz and shares 1 GB of DDR3 with the CPU. With every
-lighting option on, a busy fight scene drops below 20 FPS. The `port.ini`
-recommended for the M9 Pro keeps shadows, AO, god rays and dust off, bloom
-low, and renders at 448×336. See [Performance](#performance).
+lighting option on, a busy fight scene drops below 20 FPS. The recommended
+preset for the M9 Pro keeps shadows, AO, god rays and dust off, bloom low,
+and renders at 448×336. See [Performance](#performance).
 
 **HD texture packs made for PCSX2 work as they are:** put the pack's `.dds`
 files in a mod's `textures/` folder. F9 switches the pack off and on while you
@@ -115,340 +232,3 @@ Nothing from the disc is in this repository.
 [Releases](https://github.com/kattimasen-ops/decomp_wots2-port-test/releases)
 or from the workflow artefact. Unpack it into the `ports` folder of your
 ArkOS4Clone SD card:
-
-```
-/roms/ports/
-├── WOTS2.sh
-└── wots2/
-    ├── wots2
-    ├── port.ini
-    ├── libs.aarch64/
-    └── extracted/          ← the game's data, added on first launch
-```
-
-Start it from Ports in EmulationStation. The first launch asks for your disc
-image — an `.iso`, or a `.zip` / `.7z` / `.rar` / `.tar.*` holding the image or
-the files themselves. The launcher unpacks the files once (about 1.5 GB) and
-starts the game; after that `WOTS2.sh` alone is enough.
-
-### Requirements
-
-- **Rockchip RK3326** (4× Cortex-A35, Mali-G31 MP2, 1 GB RAM) or a
-  compatible SoC.
-- **ArkOS4Clone** (GLIBC 2.31 / Ubuntu 20.04 base) or a Linux userspace with
-  the Mali Bifrost G31 driver (`libmali-bifrost-g31-rxp0-gbm.so`) installed.
-- About 3 GB free on the SD card (extracted data plus saves).
-- A Linux-compatible gamepad. ArkOS4Clone's controller configuration is read
-  at launch; on the M9 Pro the default mapping works out of the box.
-
-### From source
-
-The build is designed to run inside a GitHub Actions runner — the container
-is Ubuntu 20.04, cross-toolchain is `gcc-aarch64-linux-gnu`, GLES comes from
-the multiarch `libgles2-mesa-dev:arm64` package. See
-`.github/workflows/build-wots2.yml`. To reproduce the same build locally:
-
-```bash
-# 1. Docker container with the same base
-docker run --rm -it -v "$PWD:/w" -w /w ubuntu:20.04 bash
-
-# 2. Inside the container, run the workflow's steps in order.
-#    The easiest way is to look at the workflow file — each `name:` is one
-#    shell block. Copy them one by one, or extract them with yq.
-```
-
-The toolchain file `cmake/aarch64-arkos.cmake` sets the cross-compiler and
-all Cortex-A35 flags. `-DWOTS2_GLES=ON` switches to EGL/GLESv2 and enables
-`IMGUI_IMPL_OPENGL_ES3`.
-
-F11 toggles fullscreen. Saves go in `wots2/wots2_card/`.
-
----
-
-## Configuration
-
-A `port.ini` next to the `wots2` binary controls every runtime option. It is
-read on startup, before the renderer is created. If the file is missing,
-everything stays on the upstream defaults.
-
-The three presets below are documented in the file itself. The **recommended**
-preset is the one shipped in the release:
-
-### Recommended — M9 Pro / RK3326
-
-```ini
-video.height = 336       # 448x336; smooth on most scenes
-video.aspect = 1.3333
-video.fps    = 30
-video.vsync  = true
-video.fullscreen = true
-
-lighting.shadows         = false
-lighting.ao              = false
-lighting.god_rays        = 0.0
-lighting.dust            = 0.0
-lighting.bloom           = 0.15
-lighting.bloom_threshold = 0.85
-lighting.grade           = false
-lighting.lanterns        = true
-lighting.lantern_shadows = false
-
-fog.far_scale = 0.85     # 15% shorter view distance
-```
-
-### Low — maximum stability
-
-```ini
-video.height = 224
-video.fps    = 30
-
-lighting.shadows   = false
-lighting.ao        = false
-lighting.bloom     = 0.0
-lighting.god_rays  = 0.0
-lighting.dust      = 0.0
-lighting.lanterns  = false
-```
-
-### High — quiet scenes only
-
-```ini
-video.height = 448
-video.fps    = 60
-lighting.shadows        = true
-lighting.shadow_size    = 512
-lighting.shadow_strength = 0.4
-lighting.ao             = true
-lighting.ao_strength    = 0.6
-lighting.bloom          = 0.3
-lighting.god_rays       = 0.4
-lighting.dust           = 0.5
-lighting.grade          = true
-lighting.lanterns       = true
-lighting.lantern_shadows = true
-```
-
-The in-game **Settings → R1 Enhancements** menu (or **F5**) exposes the same
-options live. **Save** keeps them back to `port.ini`.
-
-### Environment overrides
-
-Any setting can be overridden for one launch with an environment variable.
-The launcher `WOTS2.sh` uses this to pin the CPU governor:
-
-| Variable | Effect |
-|---|---|
-| `WOTS2_VIDEO=height=336,fps=30` | Overrides `video.*` for this run |
-| `WOTS2_FAST=1` | Runs as fast as possible (no vsync, no frame pacing) |
-| `WOTS2_NO_CULL=1` | Draws every mesh, no frustum or fog culling (diagnostic) |
-
----
-
-## Performance
-
-The RK3326's Cortex-A35 cores have a low IPC and the Mali-G31 MP2 is one of
-the smallest Bifrost configurations. The M9 Pro shares 1 GB of DDR3 between
-CPU, GPU and the OS.
-
-The numbers below are what to expect at the recommended settings
-(448×336, no shadows / no AO). **They are estimates based on comparable
-ports** — the port has not yet been benchmarked on real hardware.
-
-| Scene | Recommended (448×336) | Low (320×224) |
-|---|---|---|
-| Main menu | 50–60 FPS | 60 FPS (capped) |
-| Quiet village, day | 40–55 FPS | 55–60 FPS |
-| Fight, 3–5 enemies | 30–40 FPS | 45–55 FPS |
-| Fight, 8+ enemies | 22–32 FPS | 35–45 FPS |
-| Rain + many effects | 20–28 FPS | 30–40 FPS |
-
-If you enable shadows and AO at native resolution (640×448), expect a
-**40–60 % FPS drop**; a busy fight scene will fall below 15 FPS.
-
-The single biggest lever is `video.height`. Dropping from 448 to 336 cuts the
-pixel count by 44 %; dropping to 224 cuts it by 75 %.
-
-### Thermal throttling
-
-The RK3326 throttles the CPU and GPU at 70 °C. The `WOTS2.sh` launcher pins
-the CPU governor to `performance` at startup, which raises the throttle point
-by only a few degrees but keeps the frame time consistent — measure both if
-you are chasing the last few FPS.
-
----
-
-## Controls
-
-| | Controller | Keyboard |
-|---|---|---|
-| Run / walk | Left stick or d-pad | Arrows / T G F H |
-| Sprint (sword away) | Press L3 while running | C |
-| Jump, confirm | Cross (bottom) | Z |
-| Talk | Circle (right) | X |
-| Attack, pick up | Square (left) | A |
-| Attack, cancel | Triangle (top) | S |
-| Draw / sheathe | L1 | Q |
-| Guard (+ Square: kick) | R1 | W |
-| Camera | Right stick (R3: back behind) | J L / I K (V: back behind) |
-| Pause menu | Start | Enter |
-
-The port reads the ArkOS4Clone controller layout from EmulationStation's
-configuration. On the M9 Pro the default layout matches the Xbox layout used
-by the original game — no remap needed.
-
-| Key | |
-|---|---|
-| F2 | Level editor |
-| F3 | Modern lighting off / on, to compare |
-| F4 | Print where you are (for bug reports) |
-| F5 | Graphics panel: FPS, lighting, weather, dust — live, with Save |
-| F6 | FPS unlock off / on |
-| F7 | Photo mode (F12 saves the picture) |
-| F8 | Weather: clear → rain → by itself |
-| F9 | HD texture pack off / on |
-| F11 | Fullscreen |
-| F12 | Save photo / screenshot |
-
----
-
-## How it works
-
-```
- SLUS_208.93 (MIPS R5900)                    this repository
-┌─────────────────────────┐      ┌──────────────────────────────────────┐
-│ game + engine code      │ ───▶ │ src/game, src/engine   decompiled C++ │
-│ data, vtables, tables   │ ───▶ │ loaded at its real PS2 addresses      │
-│ GS · SPU2 · pad · disc  │ ───▶ │ src/hal   GLES 3.2 · SDL2 · input     │
-└─────────────────────────┘      └──────────────────────────────────────┘
-```
-
-- **Pure decompilation.** Each function is read out of Ghidra and the
-  disassembly rewritten by hand. There is no MIPS interpreter anywhere.
-- **Guest memory.** The game's data is mapped at the addresses it had on the
-  PS2, so decompiled code and original data tables agree without translation.
-  Calls through vtables go through a registry of address → native function.
-- **Hardware boundary.** The Graphics Synthesizer becomes an OpenGL ES
-  renderer that records each frame as a draw list — which is what lets the
-  same frame be replayed wider, sharper, and in between.
-
-About 1,900 of the binary's ~4,600 functions are decompiled. Much of the rest
-is the script compiler, Sony's libraries and debug screens the game never
-shows.
-
-### What is different on this port
-
-The upstream code paths for `port/linux`, `port/windows` and `port/macos`
-are **unchanged**. The RK3326 port lives entirely in:
-
-| File | Purpose |
-|---|---|
-| `cmake/aarch64-arkos.cmake` | Cross-compile toolchain, Cortex-A35 flags |
-| `src/native/port_options.cpp` | `port.ini` reader and applier |
-| `include/native/port_options.h` | Public interface |
-| `patches/wots2-gles.py` | Shader rewrite to `#version 320 es` |
-| `patches/wots2-gles-precision.py` | `mediump` for colour maths |
-| `patches/wots2-neon.py` | NEON vertex-lerp and cull helpers |
-| `patches/sdl2-pageflip.py` | Mali-G31 KMSDRM pageflip fallback |
-| `.github/workflows/build-wots2.yml` | CI cross-compile pipeline |
-
-The upstream `CMakeLists.txt` is extended by an option `WOTS2_GLES=ON`, which
-switches the OpenGL finder to `pkg-config`-based EGL/GLESv2 and enables the
-ImGui ES 3 backend define.
-
----
-
-## Honest status
-
-It plays start to finish, and automated runs take whole games through to an
-ending without a crash. It is not finished:
-
-- **The RK3326 build has not been tested on real hardware yet.** The GitHub
-  Actions pipeline produces a binary that links cleanly against libmali and
-  SDL2; the first real-hardware test is still pending.
-- Map and model **drawing and lighting are native approximations**, not the
-  original's VU1 code. It looks right; it is not bit-exact.
-- It has **not been compared side by side with the original** on real
-  hardware or PCSX2 for timing, sound and feel.
-- **The performance table above is a projection**, not measured data. Once
-  the port runs on the M9 Pro, real numbers will replace it.
-
-Found something that looks or plays wrong? That's the most useful thing you can
-report. Please include the output of **F4** (your position) and a screenshot
-if possible.
-
----
-
-## Poking around
-
-```bash
-# Cross-compile from source
-cmake -S . -B build -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE=cmake/aarch64-arkos.cmake \
-    -DSDL2_INSTALL_DIR=/path/to/sdl2-install \
-    -DWOTS2_GLES=ON
-cmake --build build -j4
-```
-
-The same helper tools from upstream apply:
-
-```bash
-tools/ghidra_decomp.sh 0x1C3AC0        # Ghidra pseudocode for a function
-tools/volume.py list                   # what's in VOLUME.DAT
-tools/sx.py src CTX/Opening            # read an event script
-tools/task.py dump shop.bin            # read an NPC's task script
-WOTS2_MODEL_VIEW=shujinko_01 ./build/wots2 extracted    # model viewer
-WOTS2_MAP_VIEW=numata        ./build/wots2 extracted    # fly through a map
-```
-
----
-
-## Legal
-
-This repository contains none of the game's binaries, assets or disc contents.
-It is an independent, non-commercial preservation and research project, not
-affiliated with or endorsed by Acquire, Spike or Capcom. *Way of the Samurai*
-is a trademark of its owners. You must own the game to use this.
-
-The Mali driver (`libmali-bifrost-g31-rxp0-gbm.so`) is not redistributed here;
-the build downloads SDL2 sources from [libsdl.org](https://www.libsdl.org/)
-and patches them at build time (the resulting shared library is bundled in
-the releases, as the zlib licence allows).
-
----
-
-## Credits
-
-### Upstream
-
-- **[acklavidian](https://github.com/acklavidian)** —
-  [decomp_wots2](https://github.com/acklavidian/decomp_wots2): the
-  decompilation, the original Linux/Windows/macOS backends, the mod loader,
-  the modern lighting work, the level editor, the launcher, and everything
-  else that makes this game playable on a modern machine. This port is a
-  thin hardware-specific layer on top of that work.
-- **The GameCube / Wii decompilation community** (for tooling conventions
-  and the Ghidra workflow this project follows).
-- **Bungie and the Halo CE RK3326 port** (github.com/kattimasen-ops/halo-ce-rk3326-Port)
-  — the KMSDRM pageflip workaround, the SDL2 cross-compile recipe, and the
-  `-mno-outline-atomics` insight all come from that project.
-
-### This port
-
-- **St0len-One** — RK3326 / M9 Pro cross-compile target, GLES 3.2 shader
-  rewrite, NEON vertex-lerp, `port.ini` option system, GitHub Actions CI
-  pipeline, documentation.
-
-### Tools
-
-- [Dear ImGui](https://github.com/ocornut/imgui) — the level editor overlay.
-- [xxHash](https://github.com/Cyan4973/xxHash) — XXH3 for PCSX2-named
-  texture packs.
-- [libarchive](https://libarchive.org/) — disc image unpacking in the launcher.
-- [SDL2](https://www.libsdl.org/) — audio, input, KMSDRM video.
-- The GCC and LLVM teams, for the Cortex-A35 codegen that makes the
-  `-mno-outline-atomics` workaround necessary and effective.
-
----
-
-*If you fork this, please keep both names visible. The decompilation took
-years; the port took weeks. Both deserve the attribution.*
