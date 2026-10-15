@@ -42,6 +42,7 @@ log_section() {
 log_section "WOTS2 START"
 log "SCRIPT_DIR=$SCRIPT_DIR"
 log "GAMEDIR=$GAMEDIR"
+log "Kernel=$(uname -r), Arch=$(uname -m)"
 
 # ── LOCK ─────────────────────────────────────────────────────────────
 exec 9> /tmp/wots2-lock 2>/dev/null || true
@@ -85,7 +86,7 @@ elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
     fi
 fi
 
-# ── SYSTEMOPTIMIERUNG (Governor, ZRAM, Services) ─────────────────────
+# ── SYSTEMOPTIMIERUNG ────────────────────────────────────────────────
 log_section "SYSTEMOPTIMIERUNG"
 
 cpu_governor_path=""
@@ -266,7 +267,6 @@ log_section "ISO-ENTPACKEN"
 if [ -d "$EXTRACTED" ] && [ -n "$(ls -A "$EXTRACTED" 2>/dev/null)" ]; then
     log "extracted/ bereits vorhanden — überspringe Entpacken."
 else
-    # 1. Disc-Image suchen
     IMG=""
     for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
                 "$GAMEDIR"/*.zip "$GAMEDIR"/*.7z "$GAMEDIR"/*.rar \
@@ -281,7 +281,6 @@ else
     fi
     log "Disc-Image: $IMG"
 
-    # 2. Entpacker wählen: bsdtar > 7z > unzip
     EXTRACTOR=""
     if command -v bsdtar >/dev/null 2>&1; then
         EXTRACTOR="bsdtar"
@@ -300,7 +299,6 @@ else
     fi
     log "Entpacker: $EXTRACTOR"
 
-    # 3. Temporär entpacken
     TMP="$GAMEDIR/.extract-tmp"
     rm -rf "$TMP"
     mkdir -p "$TMP"
@@ -330,7 +328,6 @@ else
             ;;
     esac
 
-    # 4. Inhalt nach extracted/ verschieben (flach, falls ein Unterordner)
     mkdir -p "$EXTRACTED"
     SUBDIR=$(find "$TMP" -maxdepth 2 -type d -name "PS2" -o -type d -name "SLUS*" 2>/dev/null | head -n 1)
     if [ -n "$SUBDIR" ] && [ -d "$SUBDIR" ]; then
@@ -344,10 +341,8 @@ else
     log "Entpacken abgeschlossen. Inhalt:"
     ls -la "$EXTRACTED" | head -20 | while IFS= read -r line; do log "  $line"; done
 
-    # 5. Prüfen, ob die Kern-Datei da ist
     if [ ! -f "$EXTRACTED/SLUS_208.93" ] && [ ! -f "$EXTRACTED/slus_208.93" ]; then
         log "WARNUNG: SLUS_208.93 nicht in extracted/ gefunden."
-        log "  Inhalt von extracted/:"
         find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | while IFS= read -r line; do log "  $line"; done
     else
         log "SLUS_208.93 vorhanden — Extraktion OK."
