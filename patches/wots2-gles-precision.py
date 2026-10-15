@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-Setzt Farb-/Combiner-Berechnungen auf mediump (16-bit).
-Auf Mali-G31 sind half-Floats 2x schneller als 32-bit floats.
-Quelle: ARM Mobile Shader Optimization Guide.
-"""
+"""Setzt Farb-/Combiner-Berechnungen auf mediump (16-bit)."""
 import re, sys, pathlib
 
 def patch(path):
