@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""
-Ersetzt die heißen Skalar-Schleifen in src/hal/gs.cpp durch NEON-Aufrufe.
-Betrifft verts2(), verts3() und box_outside().
-Quelle: ARM NEON Intrinsics, Cortex-A35 dual-load-port.
-"""
+"""Ersetzt heiße Skalar-Schleifen in src/hal/gs.cpp durch NEON."""
 import re, sys, pathlib
 
 NEON_HELPER = '''
-// ── NEON-Helfer (aarch64) ─────────────────────────────────────────────────
+// ── NEON-Helfer (aarch64) ─────────────────────────────────────────────
 #include <arm_neon.h>
 
 static inline void wots2_lerp_vertex(const Vertex& a, const Vertex& b, float t, Vertex& o) {
@@ -63,23 +59,18 @@ static inline bool wots2_box_outside(const float* lo, const float* hi, const flo
 def patch(path):
     p = pathlib.Path(path)
     t = p.read_text()
-
     if 'wots2_lerp_vertex' in t:
-        print('  NEON bereits vorhanden – überspringe.')
-        return
+        print('  NEON bereits vorhanden.'); return
 
-    # Include nach den vorhandenen Includes einfügen
     last_inc = list(re.finditer(r'^#include [<"][^\n]+[>\"]\n', t, re.M))[-1]
     t = t[:last_inc.end()] + NEON_HELPER + t[last_inc.end():]
 
-    # verts2() Lerp
     old_v2 = re.compile(
         r'(o\.x = mix\(a\[i\]\.x, o\.x, t\); o\.y = mix\(a\[i\]\.y, o\.y, t\);\s*'
         r'o\.r = mix\(a\[i\]\.r, o\.r, t\); o\.g = mix\(a\[i\]\.g, o\.g, t\);\s*'
         r'o\.b = mix\(a\[i\]\.b, o\.b, t\); o\.a = mix\(a\[i\]\.a, o\.a, t\);)', re.S)
     t, n2 = old_v2.subn('wots2_lerp_vertex(a[i], s_tmp2[(size_t)i], t, s_tmp2[(size_t)i]);', t)
 
-    # verts3() Lerp
     old_v3 = re.compile(
         r'(o\.x = mix\(a\[i\]\.x, o\.x, t\); o\.y = mix\(a\[i\]\.y, o\.y, t\); o\.z = mix\(a\[i\]\.z, o\.z, t\);\s*'
         r'if \(c\.lerpUv\) \{ o\.u = mix\(a\[i\]\.u, o\.u, t\); o\.v = mix\(a\[i\]\.v, o\.v, t\); \}\s*'
@@ -87,7 +78,6 @@ def patch(path):
         r'o\.b = mix\(a\[i\]\.b, o\.b, t\); o\.a = mix\(a\[i\]\.a, o\.a, t\);)', re.S)
     t, n3 = old_v3.subn('wots2_lerp_vertex3(a[i], s_tmp3[(size_t)i], t, s_tmp3[(size_t)i]);', t)
 
-    # box_outside()
     old_box = re.compile(
         r'static bool box_outside\(const float\* lo, const float\* hi, const float\* m, float xscale\) \{\s*'
         r'int out\[6\] = \{\};.*?return false;\s*\}', re.S)
