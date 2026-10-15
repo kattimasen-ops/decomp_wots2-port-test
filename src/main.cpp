@@ -12,6 +12,7 @@
 #include "native/launcher.h"
 #include "native/model.h"
 #include "native/mods.h"
+#include "native/port_options.h"      // NEU: port.ini-Loader
 
 #include <cstdio>
 #include <cstdlib>
@@ -40,9 +41,37 @@ int main(int argc, char* argv[]) {
     hle::set_disc_root(root.c_str());
 
     hal::iop::init(root.c_str());
+
+    // ── Port-Optionen (port.ini) ────────────────────────────────────
+    // Liest port.ini und setzt hal::gs::Video + hal::gs::Lighting, BEVOR
+    // der Renderer startet. Sucht in dieser Reihenfolge:
+    //   1. ./port.ini            (neben dem Launcher-Skript)
+    //   2. <root>/port.ini       (im Spieldaten-Verzeichnis)
+    // Fehlt die Datei, bleibt alles auf Upstream-Default.
+    {
+        port_options::Options opts;
+        bool loaded = false;
+        for (const std::string& candidate : {
+                std::string("port.ini"),
+                root + "/port.ini" }) {
+            if (FILE* f = fopen(candidate.c_str(), "rb")) {
+                fclose(f);
+                opts = port_options::load(candidate.c_str());
+                loaded = true;
+                break;
+            }
+        }
+        if (!loaded) {
+            fprintf(stderr, "[main] port.ini nicht gefunden; Defaults aktiv\n");
+        }
+        port_options::apply(opts);
+    }
+
     hal::gs::init(640, 448, "Way of the Samurai 2 [native]");
+
     // Debug aid: WOTS2_VIDEO="aspect=1.7778,height=1080,fps=60" sets what the
-    // video mods would (see hal::gs::Video), without any mod.
+    // video mods would (see hal::gs::Video), without any mod. Überschreibt
+    // port.ini-Werte, damit man sie beim Testen schnell ändern kann.
     if (const char* v = getenv("WOTS2_VIDEO")) {
         hal::gs::Video video = hal::gs::video();
         if (const char* at = strstr(v, "aspect=")) video.aspect = (float)atof(at + 7);
