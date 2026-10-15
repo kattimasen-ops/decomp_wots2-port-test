@@ -20,5 +20,9 @@ grep -q 'wots2_lerp_vertex3' src/hal/gs.cpp || {
     echo "FEHLER: NEON-Patch fehlt."
     exit 1
 }
+grep -q 'wots2_draw_buffer_none' src/hal/gs.cpp || {
+    echo "FEHLER: glDrawBuffer-Fix fehlt."
+    exit 1
+}
 
 echo "OK: Patches angewendet."
