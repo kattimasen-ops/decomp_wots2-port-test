@@ -247,8 +247,13 @@ export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 # ── RUNTIME-TUNING ───────────────────────────────────────────────────
 export WOTS2_NO_VSYNC=1
 export WOTS2_BUTTON_REMAP=1
+
+# Glibc-Allocator (1 GB RAM)
 export MALLOC_TRIM_THRESHOLD_=131072
 export MALLOC_MMAP_THRESHOLD_=131072
+
+# Mali-G31 DDK / AFBC
+export MALI_AFBC=1
 export MALI_MAX_ASYNC_BUFFER_COUNT=2
 export MALI_BUFFER_PREALLOC=1
 
