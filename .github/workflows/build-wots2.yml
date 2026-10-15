@@ -19,7 +19,8 @@ jobs:
     container: ubuntu:20.04
     timeout-minutes: 120
     defaults:
-      run: { shell: bash }
+      run:
+        shell: bash
 
     env:
       SYSROOT_LIB: ${{ github.workspace }}/sysroot
@@ -29,7 +30,6 @@ jobs:
       JOBS: "4"
 
     steps:
-      # ═══════════════════════════════════════════════════════════════
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -39,24 +39,20 @@ jobs:
       - name: Git Safe Directory
         run: git config --global --add safe.directory "*" || true
 
-      # ═══════════════════════════════════════════════════════════════
-      - name: aarch64-Multiarch aktivieren
+      - name: aarch64 Multiarch aktivieren
         run: |
-          set -e
           dpkg --add-architecture arm64
           cp /etc/apt/sources.list /etc/apt/sources.list.bak
           sed -i -E 's/^deb (\[[^]]*\] )?http/deb [arch=amd64] http/' /etc/apt/sources.list
-          cat > /etc/apt/sources.list.d/arm64.list <<'EOF'
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main universe
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main universe
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main universe
-          EOF
+          printf '%s\n' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main universe' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main universe' \
+            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main universe' \
+            > /etc/apt/sources.list.d/arm64.list
           apt-get update
 
-      # ═══════════════════════════════════════════════════════════════
-      - name: CMake 3.28.3 installieren (Binary-Tarball)
+      - name: CMake 3.28.3 installieren
         run: |
-          set -e
           apt-get install -y --no-install-recommends wget ca-certificates
           wget -q https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz
           tar -xzf cmake-3.28.3-linux-x86_64.tar.gz -C /opt
@@ -66,253 +62,28 @@ jobs:
           rm cmake-3.28.3-linux-x86_64.tar.gz
           cmake --version
 
-      # ═══════════════════════════════════════════════════════════════
       - name: Native Build-Tools installieren
         run: |
-          apt-get install -y --no-install-recommends \
-            build-essential ninja-build git curl wget \
-            ca-certificates pkg-config python3 file patchelf \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu
+          apt-get install -y --no-install-recommends build-essential ninja-build git curl wget ca-certificates pkg-config python3 file patchelf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
-      # ═══════════════════════════════════════════════════════════════
-      - name: aarch64-Dev-Pakete installieren
+      - name: aarch64 Dev-Pakete installieren
         run: |
-          apt-get install -y --no-install-recommends \
-            libdrm-dev:arm64 libgbm-dev:arm64 \
-            libegl-dev:arm64 libgles2-mesa-dev:arm64 \
-            libasound2-dev:arm64 libudev-dev:arm64 \
-            libarchive-dev:arm64 zlib1g-dev:arm64 \
-            libbz2-dev:arm64 liblzma-dev:arm64 libzstd-dev:arm64 liblz4-dev:arm64 \
-            libwayland-dev:arm64
+          apt-get install -y --no-install-recommends libdrm-dev:arm64 libgbm-dev:arm64 libegl-dev:arm64 libgles2-mesa-dev:arm64 libasound2-dev:arm64 libudev-dev:arm64 libarchive-dev:arm64 zlib1g-dev:arm64 libbz2-dev:arm64 liblzma-dev:arm64 libzstd-dev:arm64 liblz4-dev:arm64 libwayland-dev:arm64
 
-      # ═══════════════════════════════════════════════════════════════
       - name: Cross-Sysroot einrichten
-        run: |
-          set -e
-          mkdir -p /usr/aarch64-linux-gnu/lib
-          for pair in \
-              "libdrm.so.2:libdrm.so" \
-              "libgbm.so.1:libgbm.so" \
-              "libEGL.so.1:libEGL.so" \
-              "libGLESv2.so.2:libGLESv2.so"; do
-            tgt="/usr/lib/aarch64-linux-gnu/${pair%%:*}"
-            lnk="/usr/aarch64-linux-gnu/lib/${pair##*:}"
-            [ -e "$tgt" ] && ln -sf "$tgt" "$lnk" || { echo "FEHLT: $tgt"; exit 1; }
-          done
+        run: bash scripts/ci-setup-sysroot.sh
 
-          PC_DIR="$SYSROOT_LIB/pkgconfig"
-          mkdir -p "$PC_DIR"
-
-          cat > "$PC_DIR/egl.pc" <<'EOF'
-          prefix=/usr
-          libdir=/usr/aarch64-linux-gnu/lib
-          includedir=/usr/include
-          Name: egl
-          Description: EGL
-          Version: 1.5
-          Libs: -L${libdir} -lEGL
-          Cflags: -I${includedir}
-          EOF
-
-          cat > "$PC_DIR/glesv2.pc" <<'EOF'
-          prefix=/usr
-          libdir=/usr/aarch64-linux-gnu/lib
-          includedir=/usr/include
-          Name: glesv2
-          Description: OpenGL ES
-          Version: 3.2
-          Libs: -L${libdir} -lGLESv2
-          Cflags: -I${includedir}
-          EOF
-
-          cat > "$PC_DIR/libdrm.pc" <<'EOF'
-          prefix=/usr
-          libdir=/usr/aarch64-linux-gnu/lib
-          includedir=/usr/include/libdrm
-          Name: libdrm
-          Description: libdrm
-          Version: 2.4.110
-          Libs: -L${libdir} -ldrm
-          Cflags: -I${includedir}
-          EOF
-
-          cat > "$PC_DIR/gbm.pc" <<'EOF'
-          prefix=/usr
-          libdir=/usr/aarch64-linux-gnu/lib
-          includedir=/usr/include
-          Name: gbm
-          Description: gbm
-          Version: 21.2.6
-          Libs: -L${libdir} -lgbm
-          Cflags: -I${includedir}
-          EOF
-
-          for m in libdrm gbm egl glesv2; do
-            pkg-config --exists "$m" && echo "OK: $m $(pkg-config --modversion $m)"
-          done
-
-      # ═══════════════════════════════════════════════════════════════
-      # SDL2 mit robustem KMSDRM-Pageflip-Patch
-      # ═══════════════════════════════════════════════════════════════
       - name: SDL2 mit KMSDRM-Pageflip-Patch bauen
-        run: |
-          set -e
-          SDL2_TAG=release-2.30.10
-          rm -rf /tmp/SDL2-src /tmp/sdl2-build
-          mkdir -p /tmp/SDL2-src
-          curl -fL --retry 3 -o /tmp/sdl2.tar.gz \
-            "https://github.com/libsdl-org/SDL/archive/refs/tags/${SDL2_TAG}.tar.gz"
-          tar -xzf /tmp/sdl2.tar.gz -C /tmp/SDL2-src --strip-components=1
+        run: bash scripts/ci-build-sdl2.sh
 
-          # ── KMSDRM-Check erzwingen ─────────────────────────────────
-          python3 - /tmp/SDL2-src/cmake/sdlchecks.cmake <<'PY'
-          import sys, pathlib
-          p = pathlib.Path(sys.argv[1]); t = p.read_text()
-          t = t.replace(
-            '    if(PKG_KMSDRM_FOUND AND HAVE_OPENGL_EGL)',
-            '    set(PKG_KMSDRM_FOUND TRUE)\n    set(HAVE_OPENGL_EGL TRUE)\n    if(TRUE)', 1)
-          p.write_text(t)
-          PY
+      - name: Stubs (libmali, libdecor)
+        run: bash scripts/ci-build-stubs.sh
 
-          # ── Pageflip-Patch (robuster Regex mit Verifikation) ──────
-          python3 - /tmp/SDL2-src/src/video/kmsdrm/SDL_kmsdrmopengles.c <<'PY'
-          import sys, re, pathlib
-          p = pathlib.Path(sys.argv[1])
-          t = p.read_text()
+      - name: gs.cpp patchen
+        run: bash scripts/ci-patch-gs.sh
 
-          # Zeige alle relevanten Zeilen (Diagnose)
-          print("== Zeilen mit 'KMSDRM_drmModePageFlip' in der Quelle:")
-          for i, line in enumerate(t.splitlines(), 1):
-              if 'KMSDRM_drmModePageFlip' in line:
-                  print(f"   {i}: {line.strip()}")
-
-          # Robuster Regex: die exakte Zeile mit dem Aufruf, tolerant
-          # gegenüber Whitespace und evtl. vorhandenen Kommentaren.
-          m = re.search(
-              r'(ret = KMSDRM_drmModePageFlip\(viddata->drm_fd,\s*'
-              r'dispdata->crtc->crtc_id,\s*'
-              r'fb_info->fb_id, flip_flags,\s*'
-              r'&windata->waiting_for_flip\);)',
-              t)
-          if not m:
-              print("FEHLER: KMSDRM_drmModePageFlip-Zeile nicht gefunden.",
-                    file=sys.stderr)
-              sys.exit(1)
-
-          # Fallback-Block: bei Fehlschlag das ASYNC-Flag entfernen
-          # und ohne den Flag noch einmal versuchen.
-          fallback = '''
-    if (ret != 0 && (flip_flags & DRM_MODE_PAGE_FLIP_ASYNC)) {
-        SDL_LogInfo(SDL_LOG_CATEGORY_VIDEO,
-            "Async pageflip rejected by the driver; using synchronous flips.");
-        viddata->async_pageflip_support = SDL_FALSE;
-        flip_flags &= ~DRM_MODE_PAGE_FLIP_ASYNC;
-        ret = KMSDRM_drmModePageFlip(viddata->drm_fd, dispdata->crtc->crtc_id,
-            fb_info->fb_id, flip_flags, &windata->waiting_for_flip);
-    }'''
-
-          t = t[:m.end()] + fallback + t[m.end():]
-          p.write_text(t)
-          print("Pageflip-Patch erfolgreich eingefügt.")
-          PY
-
-          # ── Verifikation: Patch muss im Quellcode stehen ──────────
-          if ! grep -q "Async pageflip rejected" \
-              /tmp/SDL2-src/src/video/kmsdrm/SDL_kmsdrmopengles.c; then
-            echo "FEHLER: Patch nicht im Quellcode angekommen."
-            echo "Auszug (Zeilen 60..120):"
-            sed -n '60,120p' /tmp/SDL2-src/src/video/kmsdrm/SDL_kmsdrmopengles.c
-            exit 1
-          fi
-          echo "OK: Patch steht im Quellcode."
-
-          # ── Bauen ──────────────────────────────────────────────────
-          cmake -S /tmp/SDL2-src -B /tmp/sdl2-build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/aarch64-arkos.cmake" \
-            -DSDL2_INSTALL_DIR="$SDL2_INSTALL" \
-            -DCMAKE_INSTALL_PREFIX="$SDL2_INSTALL" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF \
-            -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_KMSDRM=ON \
-            -DSDL_OPENGL=OFF -DSDL_OPENGLES=ON \
-            -DSDL_PULSEAUDIO=OFF -DSDL_ALSA=ON
-          cmake --build /tmp/sdl2-build -j "$JOBS"
-          cmake --install /tmp/sdl2-build
-
-          # ── Diagnose: welche libSDL2-Dateien wurden installiert? ──
-          echo "== SDL2 lib-Verzeichnis:"
-          ls -la "$SDL2_INSTALL/lib/" || true
-
-          # ── Robuster Finder: irgendeine libSDL2*.so*-Datei ────────
-          SDL2_LIB=$(find "$SDL2_INSTALL/lib" -maxdepth 1 \
-                       -name "libSDL2*.so*" -type f -o \
-                       -name "libSDL2*.so*" -type l 2>/dev/null | head -1)
-          if [ -z "$SDL2_LIB" ]; then
-            echo "FEHLER: keine libSDL2*.so*-Datei gefunden."
-            ls -la "$SDL2_INSTALL/lib/" || true
-            exit 1
-          fi
-          echo "Gefundene SDL2-Bibliothek: $SDL2_LIB"
-          ls -la "$SDL2_LIB"
-          file "$SDL2_LIB" || true
-
-          # ── Verifikation: String im Binary ─────────────────────────
-          if aarch64-linux-gnu-strings "$SDL2_LIB" 2>/dev/null \
-               | grep -q "Async pageflip rejected"; then
-            echo "OK: Pageflip-Patch ist im Binary."
-          else
-            echo "FEHLER: Pageflip-Patch fehlt im Binary."
-            echo "== Letzte 30 Strings der Bibliothek (Diagnose):"
-            aarch64-linux-gnu-strings "$SDL2_LIB" 2>/dev/null | tail -30 || true
-            echo "== Strings mit 'pageflip' (case-insensitive):"
-            aarch64-linux-gnu-strings "$SDL2_LIB" 2>/dev/null \
-              | grep -i "pageflip" || echo "   (keine)"
-            exit 1
-          fi
-
-      # ═══════════════════════════════════════════════════════════════
-      - name: libmali.so.0-Stub + libdecor-Stub
-        run: |
-          set -e
-          mkdir -p "$SYSROOT_LIB"
-
-          aarch64-linux-gnu-gcc -shared -fPIC \
-            -Wl,-soname,libmali.so.0 \
-            -o "$SYSROOT_LIB/libmali.so.0" -x c - <<'EOF'
-          /* Linker-Stub. Kein Code, keine Symbole. */
-          EOF
-
-          aarch64-linux-gnu-gcc -shared -fPIC \
-            -Wl,-soname,libdecor-0.so.0 \
-            -o "$SYSROOT_LIB/libdecor-0.so.0" -x c - <<'EOF'
-          void libdecor_new(void) {}
-          void libdecor_unref(void) {}
-          EOF
-
-      # ═══════════════════════════════════════════════════════════════
-      - name: gs.cpp patchen (GLES + Precision + NEON)
-        run: |
-          set -e
-          chmod +x patches/wots2-gles.py \
-                   patches/wots2-gles-precision.py \
-                   patches/wots2-neon.py
-
-          python3 patches/wots2-gles.py src/hal/gs.cpp
-          python3 patches/wots2-gles-precision.py src/hal/gs.cpp
-          python3 patches/wots2-neon.py src/hal/gs.cpp
-
-          count=$(grep -c '#version 320 es' src/hal/gs.cpp || true)
-          echo "Shader umgestellt auf ES 3.2: $count"
-          [ "$count" -ge 7 ] || { echo "FEHLER: zu wenige Shader umgestellt"; exit 1; }
-
-          grep -q 'wots2_lerp_vertex3' src/hal/gs.cpp \
-            || { echo "FEHLER: NEON-Patch nicht angewendet"; exit 1; }
-
-      # ═══════════════════════════════════════════════════════════════
       - name: CMake konfigurieren
         run: |
-          set -e
           cmake -S . -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/aarch64-arkos.cmake" \
             -DSDL2_INSTALL_DIR="$SDL2_INSTALL" \
@@ -322,50 +93,12 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_SHARED_LIBS=OFF
 
-      # ═══════════════════════════════════════════════════════════════
       - name: Bauen
         run: cmake --build build -j "$JOBS"
 
-      # ═══════════════════════════════════════════════════════════════
-      - name: Laufzeit-Libs sammeln und Bundle bauen
-        run: |
-          set -e
-          mkdir -p dist/libs.aarch64
-          cp -L build/wots2 dist/wots2
-          aarch64-linux-gnu-strip dist/wots2 || true
+      - name: Bundle bauen
+        run: bash scripts/ci-bundle.sh
 
-          # SDL2 — finde die tatsächliche Datei
-          SDL2_LIB=$(find "$SDL2_INSTALL/lib" -maxdepth 1 -name "libSDL2*.so*" | head -1)
-          if [ -n "$SDL2_LIB" ]; then
-            cp -L "$SDL2_LIB" dist/libs.aarch64/libSDL2-2.0.so.0
-            echo "SDL2 kopiert: $SDL2_LIB -> libSDL2-2.0.so.0"
-          fi
-
-          for lib in libarchive.so.13 libz.so.1 libzstd.so.1 liblzma.so.5 \
-                     libbz2.so.1.0 liblz4.so.1 libasound.so.2 libudev.so.1; do
-            f=$(find /usr/lib/aarch64-linux-gnu -maxdepth 1 -name "${lib}*" | head -1)
-            [ -n "$f" ] && cp -L "$f" dist/libs.aarch64/ || true
-          done
-
-          cat > dist/WOTS2.sh <<'LAUNCHER'
-          #!/bin/sh
-          DIR=$(dirname "$(readlink -f "$0")")
-          export LD_LIBRARY_PATH="$DIR/libs.aarch64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          export SDL_VIDEODRIVER=kmsdrm
-          export SDL_AUDIODRIVER=alsa
-          if [ -w /sys/devices/system/cpu/cpufreq/policy0/scaling_governor ]; then
-            echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor 2>/dev/null || true
-          fi
-          exec "$DIR/wots2" "$@"
-          LAUNCHER
-          chmod +x dist/WOTS2.sh
-
-          echo "== dist/wots2:"
-          file dist/wots2
-          echo "== NEEDED:"
-          aarch64-linux-gnu-readelf -d dist/wots2 | grep NEEDED || true
-
-      # ═══════════════════════════════════════════════════════════════
       - name: Upload Artefakt
         uses: actions/upload-artifact@v4
         with:
@@ -373,44 +106,9 @@ jobs:
           path: dist/
           retention-days: 30
 
-      - name: Fehleranalyse sammeln
+      - name: Fehleranalyse
         if: always()
-        run: |
-          set +e
-          {
-            echo "================================================================"
-            echo "BUILD-FEHLER-ANALYSE"
-            echo "================================================================"
-            echo "Datum: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo ""
-            echo "== CMake-Version:"
-            cmake --version 2>/dev/null | head -1
-            echo ""
-            echo "== SDL2-Installation:"
-            ls -la "$SDL2_INSTALL/lib/" 2>/dev/null || echo "  (kein lib-Verzeichnis)"
-            echo ""
-            echo "== SDL2-Patch-Check:"
-            SDL2_LIB=$(find "$SDL2_INSTALL/lib" -maxdepth 1 -name "libSDL2*.so*" 2>/dev/null | head -1)
-            if [ -n "$SDL2_LIB" ]; then
-              echo "  Bibliothek: $SDL2_LIB"
-              aarch64-linux-gnu-strings "$SDL2_LIB" 2>/dev/null \
-                | grep -q "Async pageflip rejected" \
-                && echo "  OK: Pageflip-Patch" \
-                || echo "  FEHLT: Pageflip-Patch"
-            else
-              echo "  FEHLT: keine libSDL2*.so*-Datei"
-            fi
-            echo ""
-            echo "== Build-Artefakt:"
-            if [ -f dist/wots2 ]; then
-              file dist/wots2
-              aarch64-linux-gnu-readelf -d dist/wots2 | grep NEEDED || true
-            else
-              echo "  FEHLT: dist/wots2"
-            fi
-          } > build-error-analysis.txt
-          cp build-error-analysis.txt dist/ 2>/dev/null || true
-          cat build-error-analysis.txt
+        run: bash scripts/ci-error-report.sh || true
 
       - name: Upload Fehleranalyse
         if: always()
