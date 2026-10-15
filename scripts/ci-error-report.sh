@@ -1,37 +1,33 @@
-#!/usr/bin/env bash
-set +e
+#!/bin/bash
+# Sammelt Build-Diagnose, auch bei Fehlern.
+set -uo pipefail
+cd "$(dirname "$0")/.."
 
+OUT="build-error-analysis.txt"
 {
-    echo "================================================================"
-    echo "WOTS2 RK3326 Build-Fehleranalyse"
-    echo "Datum: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "================================================================"
-    echo ""
-    echo "== CMake:"
-    cmake --version 2>/dev/null | head -n 1
-    echo ""
-    echo "== SDL2:"
-    ls -la "$SDL2_INSTALL/lib/" 2>/dev/null || echo "  (kein lib-Verzeichnis)"
+    echo "=== WOTS2 Build-Analyse ==="
+    echo "Datum: $(date)"
+    echo "Host:  $(uname -a)"
+    echo
+    echo "=== Git-Stand ==="
+    git log -1 --oneline 2>/dev/null || true
+    git status --short 2>/dev/null || true
+    echo
+    echo "=== Toolchain ==="
+    aarch64-linux-gnu-gcc --version 2>/dev/null | head -1
+    cmake --version 2>/dev/null | head -1
+    echo
+    echo "=== Build-Verzeichnis ==="
+    ls -la build/ 2>/dev/null | head -30 || echo "(kein build/)"
+    echo
+    echo "=== Ninja-Log (letzte 200 Zeilen) ==="
+    [ -f build/.ninja_log ] && tail -200 build/.ninja_log
+    echo
+    echo "=== Kompilierte Patches ==="
+    for f in patches/*.py; do
+        echo "--- $f"
+        head -5 "$f"
+    done
+} > "$OUT" 2>&1
 
-    SDL2_LIB=$(find "$SDL2_INSTALL/lib" -maxdepth 1 \( -name "libSDL2*.so*" \) 2>/dev/null | head -n 1)
-    if [ -n "$SDL2_LIB" ]; then
-        # grep -c gegen Pipe (vermeidet SIGPIPE-Effekt)
-        N=$(aarch64-linux-gnu-strings "$SDL2_LIB" | grep -c "Async pageflip rejected" || true)
-        if [ "$N" -gt 0 ]; then
-            echo "  OK: Pageflip-Patch ($N Treffer)"
-        else
-            echo "  FEHLT: Pageflip-Patch"
-        fi
-    fi
-
-    echo ""
-    echo "== Build-Artefakt:"
-    if [ -f dist/wots2 ]; then
-        file dist/wots2
-        aarch64-linux-gnu-readelf -d dist/wots2 | grep NEEDED || true
-    else
-        echo "  FEHLT: dist/wots2"
-    fi
-} > build-error-analysis.txt
-
-cat build-error-analysis.txt
+echo "Fehleranalyse: $OUT"
