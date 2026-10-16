@@ -5,28 +5,19 @@
 Fix v2:
   - Helper wird NACH `static Frame s_cur, s_prev;` eingefuegt, nicht am
     Dateianfang (dort ist Cmd noch nicht deklariert).
-  - Kein separates wots2_batch_init(): der Env-Check sitzt direkt in der
-    Variable s_batchEnabled.
+  - Kein separates wots2_batch_init(): der Env-Check sitzt direkt in
+    der Variable s_batchEnabled.
 
-Fix v3 (diese Revision):
+Fix v3:
   - Batching erlaubt jetzt auch kUvRect-Befehle. Vorher war
-    `prev.flags == 0` gefordert, was jeden Sprite und jeden Font-Glyph
-    vom Batching ausgeschlossen hat. Auf dem M9 bedeutete das einen
-    eigenen glDrawArrays pro Zeichen — der groesste Einzelposten bei
-    den Draw Calls.
+    `prev.flags == 0` gefordert, was jeden Sprite und jeden Font-
+    Glyph vom Batching ausgeschlossen hat. Auf dem M9 bedeutete
+    das einen eigenen glDrawArrays pro Zeichen.
   - Beim Zusammenfassen wird kUvRect auf dem gemergten Befehl
     entfernt: die Klausel bezog sich nur auf den ersten der beiden
-    Befehle und wuerde die Vertizes des zweiten falsch clippen.
-  - kHasZ, kFrameTex und kSpan blockieren weiterhin das Batching
-    (Z-Test braucht eigenen Zustand; Grab-Textur und Span sind
-    Sonderfaelle, bei denen das Zusammenfassen semantisch nicht
-    passt).
-
-Hintergrund:
-  ARM empfiehlt fuer OpenGL ES auf Mali weniger als 500 Draw Calls pro
-  Frame. Aufeinanderfolgende Draw2D-Befehle mit derselben Textur und
-  demselben Primitiv koennen zusammengefasst werden, weil zwischen
-  ihnen kein State-Wechsel liegt.
+    Befehle. Ein halbes Texel Bleeding an Raendern ist der Preis
+    fuer deutlich weniger Draw Calls.
+  - kHasZ, kFrameTex und kSpan blockieren weiterhin das Batching.
 
 Steuerung:
   WOTS2_NO_BATCH=1   schaltet das Batching ab.
@@ -56,7 +47,6 @@ def patch(path):
         print('  Batch-Helper bereits vorhanden (Marker: %s).' % MARKER)
         return
 
-    # 1. Helper nach `static Frame s_cur, s_prev;` einfügen.
     anchor_struct = re.search(
         r'(static\s+Frame\s+s_cur\s*,\s*s_prev\s*;\s*\n)',
         t)
@@ -65,7 +55,6 @@ def patch(path):
         sys.exit(1)
     t = t[:anchor_struct.end()] + HELPER + t[anchor_struct.end():]
 
-    # 2. Batching-Code vor `Cmd& c = push(Op::Draw2D);` in push_2d.
     anchor_push = re.search(
         r'static\s+Cmd&\s+push_2d\s*\(\s*GLuint\s+tex\s*,\s*Prim\s+prim\s*,\s*'
         r'u32\s+first\s*,\s*int\s+count\s*\)\s*\{',
@@ -83,8 +72,7 @@ def patch(path):
         '\n'
         '    // Batching-Vorprüfung: nur wenn alle Bedingungen passen.\n'
         '    // kUvRect ist ERLAUBT: die UVs liegen in den Vertex-Daten.\n'
-        '    // kHasZ / kFrameTex / kSpan blockieren weiterhin (eigener\n'
-        '    // Zustand, Grab-Textur, Widescreen-Sonderfall).\n'
+        '    // kHasZ / kFrameTex / kSpan blockieren weiterhin.\n'
         '    if (s_batchEnabled && s_recZ == kNoZ && !s_cur.cmds.empty()\n'
         '        && tex != s_grabTex) {\n'
         '        Cmd& prev = s_cur.cmds.back();\n'
@@ -100,10 +88,6 @@ def patch(path):
         '            if (!(_lo <= 0.5f && _hi >= (float)s_width - 0.5f\n'
         '                  && (tex == s_white || s_recWide))) {\n'
         '                prev.count += count;\n'
-        '                // UV-Rect-Klausel entfernen: sie stimmt nur fuer\n'
-        '                // den ersten Teil der zusammengefassten Vertizes.\n'
-        '                // Ein halbes Texel Bleeding an Raendern ist der\n'
-        '                // Preis fuer deutlich weniger Draw Calls.\n'
         '                prev.flags &= ~(u8)kUvRect;\n'
         '                s_recWide = false;\n'
         '                return prev;\n'
@@ -114,7 +98,7 @@ def patch(path):
     t = t[:push_call] + batch_code + t[push_call:]
 
     p.write_text(t)
-    print('  Batch-Patch v3 fertig (kUvRect erlaubt, kHasZ/kFrameTex/kSpan weiterhin blockierend).')
+    print('  Batch-Patch v3 fertig (kUvRect erlaubt).')
 
 
 if __name__ == '__main__':
