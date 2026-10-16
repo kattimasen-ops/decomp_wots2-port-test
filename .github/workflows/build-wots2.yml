@@ -116,6 +116,28 @@ jobs:
       - name: SDL2 mit KMSDRM-Pageflip-Patch bauen
         run: bash scripts/ci-build-sdl2.sh
 
+      # ── SDL2 KMSDRM WINDOW-FLAG-PATCH (NEU) ─────────────────────────
+      - name: SDL2 KMSDRM Window-Flag-Patch anwenden
+        run: |
+          set -euo pipefail
+          # Der Patch wird gegen den SDL2-Quellbaum angewendet.
+          # scripts/ci-build-sdl2.sh muss das Quellverzeichnis
+          # als $SDL2_SRC_DIR exportieren oder an bekannter Stelle
+          # ablegen. Wenn nicht, bitte den Pfad hier anpassen.
+          SDL2_SRC="${SDL2_SRC_DIR:-$GITHUB_WORKSPACE/SDL2}"
+          if [ ! -d "$SDL2_SRC" ]; then
+            echo "WARNUNG: SDL2-Quellverzeichnis nicht gefunden: $SDL2_SRC"
+            echo "  Suche nach SDL2-Ordnern..."
+            SDL2_SRC=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -type d -name "SDL2*" | head -1)
+            if [ -z "$SDL2_SRC" ]; then
+              echo "FEHLER: Kein SDL2-Quellverzeichnis gefunden."
+              echo "  Bitte SDL2_SRC_DIR in scripts/ci-build-sdl2.sh exportieren."
+              exit 1
+            fi
+          fi
+          echo "== SDL2-Quellverzeichnis: $SDL2_SRC =="
+          python3 patches/sdl2-kmsdrm-window.py "$SDL2_SRC"
+
       # ── STUBS (libmali, libdecor) ───────────────────────────────────
       - name: Stubs (libmali, libdecor)
         run: bash scripts/ci-build-stubs.sh
