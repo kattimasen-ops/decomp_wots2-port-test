@@ -1,31 +1,38 @@
 #!/usr/bin/env python3
 """
-2D-Draw-Call-Batching fuer Mali-G31.
+2D-Draw-Call-Batching fuer Mali-G31 (Revision v3).
 
 Fix v2:
   - Helper wird NACH `static Frame s_cur, s_prev;` eingefuegt, nicht am
     Dateianfang (dort ist Cmd noch nicht deklariert).
   - Kein separates wots2_batch_init(): der Env-Check sitzt direkt in der
-    Variable s_batchEnabled. Damit laeuft der Patch nicht mehr in die
-    Falle, den statischen s_recOwner-Initializer als Anker zu nehmen.
-  - Batching-Code steht direkt in push_2d() vor dem push()-Aufruf.
+    Variable s_batchEnabled.
+
+Fix v3 (diese Revision):
+  - Batching erlaubt jetzt auch kUvRect-Befehle. Vorher war
+    `prev.flags == 0` gefordert, was jeden Sprite und jeden Font-Glyph
+    vom Batching ausgeschlossen hat. Auf dem M9 bedeutete das einen
+    eigenen glDrawArrays pro Zeichen — der groesste Einzelposten bei
+    den Draw Calls.
+  - Beim Zusammenfassen wird kUvRect auf dem gemergten Befehl
+    entfernt: die Klausel bezog sich nur auf den ersten der beiden
+    Befehle und wuerde die Vertizes des zweiten falsch clippen.
+  - kHasZ, kFrameTex und kSpan blockieren weiterhin das Batching
+    (Z-Test braucht eigenen Zustand; Grab-Textur und Span sind
+    Sonderfaelle, bei denen das Zusammenfassen semantisch nicht
+    passt).
 
 Hintergrund:
   ARM empfiehlt fuer OpenGL ES auf Mali weniger als 500 Draw Calls pro
-  Frame. gs.cpp ruft aktuell glBufferData fuer JEDEN Draw2D-Befehl auf.
-  Aufeinanderfolgende Draw2D-Befehle mit derselben Textur und demselben
-  Primitiv koennen zusammengefasst werden, weil zwischen ihnen kein
-  State-Wechsel liegt.
+  Frame. Aufeinanderfolgende Draw2D-Befehle mit derselben Textur und
+  demselben Primitiv koennen zusammengefasst werden, weil zwischen
+  ihnen kein State-Wechsel liegt.
 
-Sicherheit:
-  - Nur wenn s_recZ == kNoZ (kein Z-State) — sonst kann das Flag nicht
-    korrekt auf den zusammengefassten Befehl uebertragen werden.
-  - Nur wenn tex != s_grabTex (der Grab-Pfad setzt kFrameTex).
-  - Nur wenn der neue Draw NICHT kSpan bekaeme (sonst wuerde der
-    Wide-Screen-Push nicht mehr auf alle Vertizes passen).
-  - Bei Problemen abschaltbar mit WOTS2_NO_BATCH=1.
+Steuerung:
+  WOTS2_NO_BATCH=1   schaltet das Batching ab.
 
-Python 3.6+ kompatibel.
+Zieldatei: src/hal/gs.cpp
+Aufruf:    python3 patches/wots2-gs-batch-2d.py src/hal/gs.cpp
 """
 import re
 import sys
@@ -46,7 +53,7 @@ def patch(path):
     t = p.read_text()
 
     if MARKER in t:
-        print('  Batch-Helper bereits vorhanden.')
+        print('  Batch-Helper bereits vorhanden (Marker: %s).' % MARKER)
         return
 
     # 1. Helper nach `static Frame s_cur, s_prev;` einfügen.
@@ -75,11 +82,15 @@ def patch(path):
     batch_code = (
         '\n'
         '    // Batching-Vorprüfung: nur wenn alle Bedingungen passen.\n'
+        '    // kUvRect ist ERLAUBT: die UVs liegen in den Vertex-Daten.\n'
+        '    // kHasZ / kFrameTex / kSpan blockieren weiterhin (eigener\n'
+        '    // Zustand, Grab-Textur, Widescreen-Sonderfall).\n'
         '    if (s_batchEnabled && s_recZ == kNoZ && !s_cur.cmds.empty()\n'
         '        && tex != s_grabTex) {\n'
         '        Cmd& prev = s_cur.cmds.back();\n'
         '        if (prev.op == Op::Draw2D && prev.tex == tex\n'
-        '            && prev.prim == (u8)prim && prev.flags == 0) {\n'
+        '            && prev.prim == (u8)prim\n'
+        '            && (prev.flags & ~(u8)kUvRect) == 0) {\n'
         '            float _lo = 1e9f, _hi = -1e9f;\n'
         '            for (int _i = 0; _i < count; _i++) {\n'
         '                const float _x = s_cur.v2[(size_t)first + (size_t)_i].x;\n'
@@ -89,6 +100,11 @@ def patch(path):
         '            if (!(_lo <= 0.5f && _hi >= (float)s_width - 0.5f\n'
         '                  && (tex == s_white || s_recWide))) {\n'
         '                prev.count += count;\n'
+        '                // UV-Rect-Klausel entfernen: sie stimmt nur fuer\n'
+        '                // den ersten Teil der zusammengefassten Vertizes.\n'
+        '                // Ein halbes Texel Bleeding an Raendern ist der\n'
+        '                // Preis fuer deutlich weniger Draw Calls.\n'
+        '                prev.flags &= ~(u8)kUvRect;\n'
         '                s_recWide = false;\n'
         '                return prev;\n'
         '            }\n'
@@ -98,7 +114,7 @@ def patch(path):
     t = t[:push_call] + batch_code + t[push_call:]
 
     p.write_text(t)
-    print('  Batch-Patch fertig.')
+    print('  Batch-Patch v3 fertig (kUvRect erlaubt, kHasZ/kFrameTex/kSpan weiterhin blockierend).')
 
 
 if __name__ == '__main__':
