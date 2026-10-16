@@ -364,6 +364,24 @@ log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
+# ── Bundle-Bibliotheken (NEU) ────────────────────────────────────────
+# Prueft, ob die gepatchte SDL2 tatsaechlich im Bundle liegt. Fehlt
+# sie, laedt die Binary die System-SDL2 — und die hat den KMSDRM-
+# Pageflip-Patch NICHT. Ergebnis auf dem Geraet waere: "Invalid window".
+log ""
+log "Bundle-Bibliotheken (libs.aarch64):"
+if [ -d "$GAMEDIR/libs.aarch64" ]; then
+    ls -la "$GAMEDIR/libs.aarch64" 2>&1 | log_pipe
+    if [ -e "$GAMEDIR/libs.aarch64/libSDL2-2.0.so.0" ]; then
+        log "  OK: libSDL2-2.0.so.0 im Bundle — System-SDL2 wird umgangen."
+    else
+        log "  WARNUNG: libSDL2-2.0.so.0 fehlt in libs.aarch64!"
+        log "  Es wird die System-SDL2 geladen; der KMSDRM-Pageflip-Patch greift dann NICHT."
+    fi
+else
+    log "  (libs.aarch64 fehlt komplett)"
+fi
+
 log ""
 log "Binary ./wots2:"
 log_binary_info "./wots2"
