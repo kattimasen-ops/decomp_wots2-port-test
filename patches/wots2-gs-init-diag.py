@@ -4,15 +4,20 @@ patches/wots2-gs-init-diag.py
 
 Zweck:  Ersetzt den undifferenzierten Fehler-Check in hal::gs::init()
         durch granulare Fehlerbehandlung und Diagnoseausgaben. Stellt
-        den GL-Profilwunsch von Desktop-GL-Core auf OpenGL ES um.
+        den GL-Profilwunsch von Desktop-GL-Core auf OpenGL ES 3.2 um.
 
 Hintergrund:
-        Der aktuelle Code fragt einen Desktop-OpenGL-3.3-Core-Kontext
-        an, obwohl SDL2 mit '-DSDL_OPENGL=OFF -DSDL_OPENGLES=ON' gebaut
-        wurde und die Mali-G31 nur OpenGL ES hat. Ausserdem prueft der
-        Code SDL_Init und SDL_CreateWindow nicht: ein NULL-Window wird
-        an SDL_GL_CreateContext weitergereicht, was CHECK_WINDOW_MAGIC
-        mit 'Invalid window' quittiert — nicht die eigentliche Ursache.
+        Der urspruengliche Code fragt einen Desktop-OpenGL-3.3-Core-
+        Kontext an, obwohl SDL2 mit '-DSDL_OPENGL=OFF -DSDL_OPENGLES=ON'
+        gebaut wurde und die Mali-G31 nur OpenGL ES hat. Ausserdem prueft
+        der Code SDL_Init und SDL_CreateWindow nicht: ein NULL-Window
+        wird an SDL_GL_CreateContext weitergereicht, was
+        CHECK_WINDOW_MAGIC mit 'Invalid window' quittiert — nicht die
+        eigentliche Ursache.
+
+        ES-3.2 statt ES-3.0: Mali gibt bei minor=0 nur einen ES-3.0-
+        Kontext, der '320 es' in den Shadern nicht akzeptiert. Der Port
+        braucht aber gl_FragDepth, das erst ab ES 3.2 verfuegbar ist.
 
 Zieldatei: src/hal/gs.cpp
 Marker:    WOTS2-GS-INIT-DIAG
@@ -37,10 +42,10 @@ NEW_BLOCK = '''    // --- WOTS2-GS-INIT-DIAG: granulare Fehlerdiagnose ---
     }
     fprintf(stderr, "[GS] video driver: %s\\n", SDL_GetCurrentVideoDriver());
 
-    // Mali-G31 has OpenGL ES only.  Ask for ES 3.0; the driver gives the
-    // highest 3.x it has.
+    // Mali-G31 has OpenGL ES 3.2 only.  Ask for ES 3.2; the driver gives
+    // the highest 3.x it has.
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
