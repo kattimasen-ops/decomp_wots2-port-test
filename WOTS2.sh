@@ -11,29 +11,34 @@
 #              Extrahieren von .chd-Dateien genutzt. Die entstandene ISO
 #              wird im selben Lauf entpackt; die ISO bleibt nicht liegen.
 #
-# Diagnose:  Halo-artiges Logging mit file/readelf/ldd-Dump,
-#            LD_DEBUG=libs-Probe und Signal-Erkennung.
-#
 # Killswitch:
 #   gptokeyb wird mit SDL_GAMECONTROLLERCONFIG_FILE gestartet. Der
 #   Standard-Hotkey (Select+Start) beendet wots2 sauber. Wenn wots2
-#   auf SIGTERM nicht reagiert (z.B. haengender Shader-Compile-Loop),
-#   eskaliert der Launcher nach 3 Sekunden auf SIGKILL.
+#   auf SIGTERM nicht reagiert, eskaliert der Launcher nach 3 Sekunden
+#   auf SIGKILL. Der Launcher sucht gptokeyb in PATH sowie in den auf
+#   ArkOS4Clone ueblichen Pfaden.
+#
+# AUDIO-HINWEIS (Stand jetzt):
+#   Unser SDL2-Bundle wurde ohne ALSA gebaut (FindALSA hat bei
+#   Cross-Compiles libasound nicht gefunden). Der Port laeuft daher
+#   stumm, bis scripts/ci-build-sdl2.sh um -DALSA_LIBRARY=...
+#   -DALSA_INCLUDE_DIR=... erweitert und neu gebaut wurde.
+#   Der Launcher erzwingt SDL_AUDIODRIVER nicht, damit SDL sich
+#   selbst einen verfuegbaren Treiber sucht statt abzustuerzen.
 #
 # Steuerung:
 #   WOTS2_LIBDIAG=0/1       LD_DEBUG-Probe (Default: 1)
-#   WOTS2_FX_SCALE=N        Effekt-Anzahl (Default: 1.0)
+#   WOTS2_FX_SCALE=N        Effekt-Anzahl (Default: 0.6)
+#   WOTS2_NO_CULL=0/1       Frustum-Culling aus (Default: 0)
+#   WOTS2_NO_BATCH=0/1      2D-Batching aus (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1  Shader-Cache (Default: 1)
-#   WOTS2_NO_BATCH=0/1      2D-Batching (Default: 0)
+#   WOTS2_SHADER_LRU=N      Frames bis Shader-Unload (Default: 120)
 #   WOTS2_SPLASH=N          Splash-Dauer in Sekunden (Default: 2.5)
 #   WOTS2_KILL_TIMEOUT=N    Sekunden bis SIGKILL (Default: 3)
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
-# Diagnose-Lauf standardmäßig an (Halo-Erfahrung).
 export WOTS2_LIBDIAG="${WOTS2_LIBDIAG:-1}"
-
-# Wie lange auf sauberen Exit warten, bevor SIGKILL.
 WOTS2_KILL_TIMEOUT="${WOTS2_KILL_TIMEOUT:-3}"
 
 # ── PFADE ────────────────────────────────────────────────────────────
@@ -87,6 +92,30 @@ log_binary_info() {
     fi
 }
 
+find_gptokeyb() {
+    GPTOKEYB_PATH=""
+    if command -v gptokeyb >/dev/null 2>&1; then
+        GPTOKEYB_PATH="$(command -v gptokeyb)"
+        return 0
+    fi
+    for cand in \
+        "/opt/system/Tools/PortMaster/gptokeyb" \
+        "/opt/system/Tools/gptokeyb" \
+        "/opt/tools/PortMaster/gptokeyb" \
+        "/roms/ports/PortMaster/gptokeyb" \
+        "$PM_CONTROLFOLDER/gptokeyb" \
+        "/usr/local/bin/gptokeyb" \
+        "/usr/bin/gptokeyb" \
+        "/usr/local/sbin/gptokeyb" \
+        "/usr/sbin/gptokeyb"; do
+        if [ -n "$cand" ] && [ -x "$cand" ]; then
+            GPTOKEYB_PATH="$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
 log_section "WOTS2 START"
 log "SCRIPT_DIR=$SCRIPT_DIR"
 log "GAMEDIR=$GAMEDIR"
@@ -132,9 +161,7 @@ elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
         log "SDL_GAMECONTROLLERCONFIG aus sdl_mapping.py gesetzt."
 fi
 
-# ── gptokeyb braucht eine DATEI, nicht nur die Env-Variable ──────────
-# Ohne SDL_GAMECONTROLLERCONFIG_FILE kann gptokeyb den Controller nicht
-# einordnen und ignoriert den Kill-Hotkey (Select+Start).
+# gptokeyb braucht eine DATEI, nicht nur die Env-Variable
 if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
     export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/wots2-gamecontrollerdb.txt"
     printf '%s\n' "$SDL_GAMECONTROLLERCONFIG" > "$SDL_GAMECONTROLLERCONFIG_FILE" 2>/dev/null || true
@@ -184,7 +211,6 @@ else
     log "GPU-Governor: kein Devfreq-Pfad gefunden"
 fi
 
-# ── ZRAM mit lz4 (schneller als lzo auf dem Cortex-A35) ──────────────
 if ! swapon --show 2>/dev/null | grep -q zram; then
     modprobe zram 2>/dev/null || true
     if [ -e /dev/zram0 ]; then
@@ -255,7 +281,6 @@ trap restore EXIT
 mkdir -p /var/run/battery-saver 2>/dev/null && \
     touch /var/run/battery-saver/wots2.pause 2>/dev/null || true
 
-# ── SAVE-VERZEICHNISSE ───────────────────────────────────────────────
 mkdir -p "$GAMEDIR/wots2_card" "$GAMEDIR/save" "$GAMEDIR/screenshots" \
          "$GAMEDIR/shader_cache" 2>/dev/null || true
 
@@ -274,10 +299,10 @@ for node in /dev/dri/card0 /dev/dri/renderD128 /dev/fb0; do
 done
 
 # ── MALI-SYMLINKS ────────────────────────────────────────────────────
-# Hinweis: libgbm wird NICHT auf die Mali-Blob gelegt. Die Mali-Blob
-# ruft selbst gbm_bo_get_modifier aus der echten System-libgbm; ein
-# Symlink auf die Blob wuerde dieses Symbol nicht aufloesen und beim
-# ersten GBM-Aufruf "undefined symbol: gbm_bo_get_modifier" werfen.
+# libgbm wird NICHT auf die Mali-Blob gelegt. Die Mali-Blob ruft selbst
+# gbm_bo_get_modifier aus der echten System-libgbm; ein Symlink auf die
+# Blob wuerde dieses Symbol nicht aufloesen und beim ersten GBM-Aufruf
+# "undefined symbol: gbm_bo_get_modifier" werfen.
 log_section "MALI-SYMLINKS"
 SYSTEM_MALI=""
 for candidate in \
@@ -309,7 +334,14 @@ else
     export LD_LIBRARY_PATH="$GAMEDIR/libs.aarch64:$GAMEDIR:/roms/ports/libs:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}"
 fi
 
-# ── ALSA aufräumen ───────────────────────────────────────────────────
+# ── ALSA-Volume auf Anschlag (RK817) ─────────────────────────────────
+if command -v amixer >/dev/null 2>&1; then
+    for ctrl in Playback Master PCM Speaker Headphone DAC; do
+        amixer -c 0 sset "$ctrl" 100% unmute >/dev/null 2>&1 || true
+    done
+    amixer -c 0 cset numid=1 1 >/dev/null 2>&1 || true
+fi
+
 ASOUNDRC="$HOME/.asoundrc"
 if [ -f "$ASOUNDRC" ]; then
     WOTS2_ASOUNDRC_EXPECTED="$(printf 'pcm.!default { type hw; card 0; device 0 }\nctl.!default { type hw; card 0 }\n')"
@@ -323,7 +355,8 @@ fi
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"
 # AUDIODRIVER NICHT erzwingen: unser SDL2-Bundle hat kein ALSA drin
 # (FindALSA findet die Lib bei Cross-Compiles nicht); SDL waehlt dann
-# selbst den naechsten verfuegbaren Treiber oder schaltet stumm.
+# selbst den naechsten verfuegbaren Treiber oder laeuft stumm statt
+# abzustuerzen.
 unset SDL_AUDIODRIVER
 unset AUDIODEV
 
@@ -343,15 +376,19 @@ export MALI_MAX_ASYNC_BUFFER_COUNT=2
 export MALI_BUFFER_PREALLOC=1
 
 export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
-export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-600}"
+export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
 
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 
-export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-1.0}"
+export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.6}"
 
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
+
+# Frustum-Culling laeuft mit korrigierter NEON-Version (wots2-neon.py v3).
+# Notausgang bei Bedarf: WOTS2_NO_CULL=1 in der Umgebung setzen.
+export WOTS2_NO_CULL="${WOTS2_NO_CULL:-0}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -374,6 +411,7 @@ log "  WOTS2_SAVE_ROOT=$WOTS2_SAVE_ROOT"
 log "  WOTS2_SHADER_CACHE=$WOTS2_SHADER_CACHE"
 log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
 log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
+log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
 log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
@@ -400,6 +438,15 @@ if [ -x "$CHDMAN" ]; then
     log ""
     log "Binary ./chdman:"
     log_binary_info "./chdman"
+fi
+
+log ""
+log "gptokeyb:"
+if find_gptokeyb; then
+    log "  gefunden: $GPTOKEYB_PATH"
+else
+    log "  NICHT gefunden — Kill-Hotkey (Select+Start) faellt aus."
+    log "  Der Launcher beendet wots2 trotzdem sauber bei SIGTERM/SIGINT."
 fi
 
 # ── LD_DEBUG=libs Probe ──────────────────────────────────────────────
@@ -431,7 +478,6 @@ if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
         head -20 "$LIBDIAG_LOG" | log_pipe
     else
         log "  WARNUNG: LD_DEBUG hat nichts geschrieben."
-        log "  (Das ist verdaechtig — pruefe, ob ./wots2 wirklich startet.)"
     fi
 
     if [ "$PROBE_OK" = "1" ]; then
@@ -441,7 +487,6 @@ if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
 else
     log ""
     log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG (Probe uebersprungen)."
-    log "Zum Aktivieren: WOTS2_LIBDIAG=1 in die Umgebung setzen."
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -505,7 +550,6 @@ if [ -f "$EXTRACTED/SLUS_208.93" ] || [ -f "$EXTRACTED/slus_208.93" ]; then
 else
     NEEDS_UNPACK=1
 
-    # ── 1. CHD ───────────────────────────────────────────────────────
     CHD_FILE=""
     for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
                 "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
@@ -556,7 +600,6 @@ else
         NEEDS_UNPACK=0
     fi
 
-    # ── 2. ISO oder Archiv ───────────────────────────────────────────
     if [ "$NEEDS_UNPACK" = "1" ]; then
         IMG=""
         for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
@@ -579,7 +622,6 @@ else
         fi
     fi
 
-    # ── 3. Ergebnis pruefen ─────────────────────────────────────────
     log "Inhalt von extracted/:"
     ls -la "$EXTRACTED" | head -20 | log_pipe
 
@@ -606,7 +648,6 @@ WOTS2_STDERR="$GAMEDIR/wots2-stderr.txt"
 WOTS2_PID=""
 GPTOKEYB_PID=""
 
-# Beendet wots2 mit Eskalation SIGTERM -> SIGKILL.
 kill_wots2_escalate() {
     [ -z "$WOTS2_PID" ] && return 0
     if ! kill -0 "$WOTS2_PID" 2>/dev/null; then
@@ -627,7 +668,6 @@ kill_wots2_escalate() {
 }
 
 cleanup_all() {
-    # gptokeyb zuerst, damit es nicht weiter Tastendruecke feuert
     if [ -n "$GPTOKEYB_PID" ] && kill -0 "$GPTOKEYB_PID" 2>/dev/null; then
         kill -TERM "$GPTOKEYB_PID" 2>/dev/null || true
         sleep 0.3
@@ -640,12 +680,10 @@ cleanup_all() {
 on_signal() {
     log "Signal empfangen — beende."
     kill_wots2_escalate
-    # trap EXIT (cleanup_all) kuemmert sich um den Rest
 }
 
-# gptokeyb zuerst starten, damit der Kill-Hotkey sofort aktiv ist.
-if [ -n "$PM_CONTROLFOLDER" ] && command -v gptokeyb >/dev/null 2>&1; then
-    gptokeyb "./wots2" >/dev/null 2>&1 &
+if find_gptokeyb; then
+    "$GPTOKEYB_PATH" "./wots2" >/dev/null 2>&1 &
     GPTOKEYB_PID=$!
     log "gptokeyb gestartet (PID $GPTOKEYB_PID) — Kill-Hotkey Select+Start."
 else
@@ -660,8 +698,6 @@ trap on_signal TERM INT HUP
 WOTS2_PID=$!
 log "PID=$WOTS2_PID"
 
-# wait-Schleife: wenn ein Signal den wait unterbricht, wird die
-# Schleife neu betreten, bis der Prozess wirklich weg ist.
 WOTS2_STATUS=0
 while true; do
     wait "$WOTS2_PID"
@@ -670,13 +706,11 @@ while true; do
     log "wait wurde unterbrochen, wots2 laeuft noch — warte erneut."
 done
 
-# gptokeyb sauber schliessen
 if [ -n "$GPTOKEYB_PID" ] && kill -0 "$GPTOKEYB_PID" 2>/dev/null; then
     kill -TERM "$GPTOKEYB_PID" 2>/dev/null || true
     wait "$GPTOKEYB_PID" 2>/dev/null || true
 fi
 
-# ── POST-MORTEM ──────────────────────────────────────────────────────
 log "wots2 beendet mit Status $WOTS2_STATUS"
 
 if [ "$WOTS2_STATUS" -gt 128 ]; then
