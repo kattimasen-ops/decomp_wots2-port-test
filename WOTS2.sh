@@ -19,6 +19,7 @@
 #   WOTS2_SHADER_LRU=N             Frames bis Shader-Unload (Default: 120)
 #   WOTS2_SPLASH=N                 Splash-Dauer in Sekunden (Default: 2.5)
 #   WOTS2_KILL_TIMEOUT=N           Sekunden bis SIGKILL (Default: 3)
+#   WOTS2_PERF_TRACE=0/1           Frame-Zeiten loggen (Default: 0)
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
@@ -136,13 +137,41 @@ if [ -n "$PM_CONTROLFOLDER" ] && [ -f "$PM_CONTROLFOLDER/control.txt" ]; then
     log "PortMaster control.txt geladen aus $PM_CONTROLFOLDER"
 fi
 
+# ── SDL-GAMECONTROLLER + DIAGNOSE-DUMP ───────────────────────────────
+SDL_DIAG="$GAMEDIR/sdl_diag.txt"
+: > "$SDL_DIAG"
+{
+    echo "=== WOTS2 SDL-Diagnose $(date) ==="
+    echo "--- /proc/bus/input/devices (N: Name) ---"
+    grep 'N: Name=' /proc/bus/input/devices 2>/dev/null || echo "(nicht lesbar)"
+    echo "--- es_input.cfg Kandidaten ---"
+    for f in /userdata/system/configs/emulationstation/es_input.cfg \
+             /usr/share/emulationstation/es_input.cfg; do
+        if [ -f "$f" ]; then
+            echo "### $f"
+            cat "$f"
+            echo "### /$f"
+        fi
+    done
+} >> "$SDL_DIAG" 2>&1
+
 if [ -n "${sdl_controllerconfig:-}" ]; then
     export SDL_GAMECONTROLLERCONFIG="$sdl_controllerconfig"
     log "SDL_GAMECONTROLLERCONFIG aus PortMaster gesetzt."
 elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
-    SDL_MAP="$(cd "$GAMEDIR" && python3 sdl_mapping.py 2>/dev/null)"
-    [ -n "$SDL_MAP" ] && export SDL_GAMECONTROLLERCONFIG="$SDL_MAP" && \
+    SDL_MAP="$(cd "$GAMEDIR" && python3 sdl_mapping.py 2>>"$SDL_DIAG")"
+    if [ -n "$SDL_MAP" ]; then
+        export SDL_GAMECONTROLLERCONFIG="$SDL_MAP"
         log "SDL_GAMECONTROLLERCONFIG aus sdl_mapping.py gesetzt."
+    else
+        log "WARNUNG: sdl_mapping.py hat nichts ausgegeben — SDL faellt auf die interne Datenbank zurueck."
+    fi
+    {
+        echo "--- sdl_mapping.py stdout ---"
+        echo "${SDL_MAP:-（leer）}"
+        echo "--- SDL_GAMECONTROLLERCONFIG ---"
+        echo "${SDL_GAMECONTROLLERCONFIG:-（nicht gesetzt）}"
+    } >> "$SDL_DIAG" 2>&1
 fi
 
 if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
@@ -354,16 +383,13 @@ export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
-
 export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-1}"
 
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
-
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.4}"
-
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
-
 export WOTS2_NO_CULL="${WOTS2_NO_CULL:-0}"
+export WOTS2_PERF_TRACE="${WOTS2_PERF_TRACE:-0}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -390,6 +416,7 @@ log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
 log "  WOTS2_PERSISTENT_BUFFERS=$WOTS2_PERSISTENT_BUFFERS"
 log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
+log "  WOTS2_PERF_TRACE=$WOTS2_PERF_TRACE"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
 log ""
@@ -421,7 +448,14 @@ if find_gptokeyb; then
     log "  gefunden: $GPTOKEYB_PATH"
 else
     log "  NICHT gefunden — Kill-Hotkey (Select+Start) faellt aus."
-    log "  Der Launcher beendet wots2 trotzdem sauber bei SIGTERM/SIGINT."
+fi
+
+log ""
+log "SDL-Diagnose-Dump:"
+if [ -f "$SDL_DIAG" ]; then
+    log "  $SDL_DIAG geschrieben ($(wc -l < "$SDL_DIAG") Zeilen)"
+else
+    log "  (nicht geschrieben)"
 fi
 
 LIBDIAG_LOG="$GAMEDIR/wots2-libdiag.txt"
@@ -515,7 +549,7 @@ unpack_image() {
 }
 
 # ══════════════════════════════════════════════════════════════════════
-# ENTPACKEN — CHD zuerst, dann ISO, dann Archive
+# ENTPACKEN
 # ══════════════════════════════════════════════════════════════════════
 log_section "SPIELDATEN ENTPACKEN"
 
@@ -662,7 +696,6 @@ if find_gptokeyb; then
     log "gptokeyb gestartet (PID $GPTOKEYB_PID) — Kill-Hotkey Select+Start."
 else
     log "gptokeyb nicht gefunden — Kill-Hotkey faellt aus."
-    log "Der Launcher beendet wots2 trotzdem sauber bei SIGTERM/SIGINT."
 fi
 
 trap cleanup_all EXIT
