@@ -126,7 +126,6 @@ jobs:
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/chdman-arm64"
           cd "$GITHUB_WORKSPACE/chdman-arm64"
-          # chdman-Binärdatei für Linux arm64 (musl, statisch verlinkt)
           wget -q -O chdman \
             "https://unpkg.com/@emmercm/chdman-linux-arm64@${CHDMAN_VERSION}/dist/chdman"
           wget -q -O LICENSE-chdman.txt \
@@ -134,8 +133,6 @@ jobs:
           chmod 755 chdman
           file chdman
           ls -la
-          # (Falls die Binärdatei dynamisch gegen musl-glibc gelinkt ist,
-          #  prüfen wir das hier. Wenn sie statisch ist, ist alles gut.)
           if command -v aarch64-linux-gnu-readelf >/dev/null 2>&1; then
             echo "== readelf -d chdman =="
             aarch64-linux-gnu-readelf -d chdman || true
@@ -197,6 +194,11 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-tex-storage.py nicht gefunden — uebersprungen)"
 
+          # ── gs.cpp: Boot-Splash (St0len-One-Tag) ────────────────────
+          S=$(find_script wots2-gs-splash.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-splash.py nicht gefunden — uebersprungen)"
+
           # ── collision_world.cpp: NEON Apply + Towards + Distance ────
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
@@ -205,6 +207,16 @@ jobs:
           S=$(find_script wots2-collision-relative-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; } \
                     || echo "  (wots2-collision-relative-neon.py nicht gefunden — uebersprungen)"
+
+          # ── chara_resources.cpp: Cache fuer die heissesten Suchen ───
+          S=$(find_script wots2-chara-resources-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_resources.cpp; } \
+                    || echo "  (wots2-chara-resources-cache.py nicht gefunden — uebersprungen)"
+
+          # ── world_effects.cpp: FX-Anzahl skalieren ──────────────────
+          S=$(find_script wots2-fx-scale.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
+                    || echo "  (wots2-fx-scale.py nicht gefunden — uebersprungen)"
 
           # ── SDL2 KMSDRM Pageflip-Patch ──────────────────────────────
           S=$(find_script sdl2-pageflip.py)
