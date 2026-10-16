@@ -1,329 +1,791 @@
-name: Build WOTS2 for RK3326
+#!/bin/bash
+# WOTS2.sh — Way of the Samurai 2 für M9 Pro / RK3326 / ArkOS4Clone
+#
+# RK3326-Port: St0len-One
+# Target:      Rockchip RK3326 / Cortex-A35 / Mali-G31 MP2
+#
+# Killswitch:
+#   gptokeyb wird mit "-k wots2" gestartet. Der Standard-Hotkey
+#   (Select+Start) beendet wots2 sauber. Wenn wots2 auf SIGTERM
+#   nicht reagiert, eskaliert der Launcher nach 3 Sekunden auf SIGKILL.
+#
+# Steuerung:
+#   WOTS2_LIBDIAG=0/1              LD_DEBUG-Probe (Default: 1)
+#   WOTS2_FX_SCALE=N               Effekt-Anzahl (Default: 0.4)
+#   WOTS2_NO_CULL=0/1              Frustum-Culling aus (Default: 0)
+#   WOTS2_NO_BATCH=0/1             2D-Batching aus (Default: 0)
+#   WOTS2_PERSISTENT_BUFFERS=0/1   glBufferSubData statt glBufferData (Default: 0)
+#   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
+#   WOTS2_SHADER_LRU=N             Frames bis Shader-Unload (Default: 120)
+#   WOTS2_SPLASH=N                 Splash-Dauer in Sekunden (Default: 2.5)
+#   WOTS2_KILL_TIMEOUT=N           Sekunden bis SIGKILL (Default: 3)
+#   WOTS2_PERF_TRACE=0/1           Frame-Zeiten loggen (Default: 0)
 
-on:
-  workflow_dispatch:
-  push:
-    branches: [ main, master ]
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - 'README.md'
+XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
-permissions:
-  contents: write
+export WOTS2_LIBDIAG="${WOTS2_LIBDIAG:-1}"
+WOTS2_KILL_TIMEOUT="${WOTS2_KILL_TIMEOUT:-3}"
 
-jobs:
-  build:
-    name: Build host (aarch64) for M9 Pro / RK3326
-    runs-on: ubuntu-22.04
-    container: ubuntu:20.04
-    timeout-minutes: 180
-    defaults:
-      run:
-        shell: bash
+# ── PFADE ────────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+[ -z "$SCRIPT_DIR" ] && { echo "FEHLER: SCRIPT_DIR nicht ermittelbar." >&2; exit 1; }
+GAMEDIR="$SCRIPT_DIR/wots2"
+[ ! -d "$GAMEDIR" ] && { echo "FEHLER: $GAMEDIR fehlt." >&2; exit 1; }
+cd "$GAMEDIR" || exit 1
 
-    env:
-      SYSROOT_LIB: ${{ github.workspace }}/sysroot
-      SDL2_INSTALL: ${{ github.workspace }}/sdl2-install
-      DEBIAN_FRONTEND: noninteractive
-      PKG_CONFIG_PATH: ${{ github.workspace }}/sysroot/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
-      JOBS: "4"
-      CHDMAN_VERSION: "0.288.1"
+EXTRACTED="$GAMEDIR/extracted"
+DATA_ROOT="$GAMEDIR"
+CHDMAN="$GAMEDIR/chdman"
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: false
+# ── LOGGING ──────────────────────────────────────────────────────────
+LOG="$GAMEDIR/log.txt"
+if [ -f "$LOG" ] && [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 2097152 ]; then
+    mv -f "$LOG" "$LOG.1" 2>/dev/null || true
+fi
+if ! touch "$LOG" 2>/dev/null; then
+    LOG="/tmp/wots2-log.txt"
+    touch "$LOG" 2>/dev/null || LOG="/dev/null"
+fi
+exec >> "$LOG" 2>&1
 
-      - name: Git Safe Directory
-        run: git config --global --add safe.directory "*" || true
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
+log_section() {
+    log ""
+    log "========================================================="
+    log "== $*"
+    log "========================================================="
+}
 
-      - name: Repo-Struktur prüfen
-        run: |
-          echo "== Root =="; ls -la
-          echo "== patches/ =="; ls -la patches/ || true
-          echo "== scripts/ =="; ls -la scripts/ || true
-          echo "== cmake/ =="; ls -la cmake/ || true
+log_pipe() {
+    while IFS= read -r line; do log "    $line"; done
+}
 
-      - name: aarch64 Multiarch aktivieren
-        run: |
-          dpkg --add-architecture arm64
-          cp /etc/apt/sources.list /etc/apt/sources.list.bak
-          sed -i -E 's/^deb (\[[^]]*\] )?http/deb [arch=amd64] http/' /etc/apt/sources.list
-          printf '%s\n' \
-            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main universe' \
-            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main universe' \
-            'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main universe' \
-            > /etc/apt/sources.list.d/arm64.list
-          apt-get update
+log_binary_info() {
+    local bin="$1"
+    [ ! -e "$bin" ] && { log "  ($bin existiert nicht)"; return; }
+    if command -v file >/dev/null 2>&1; then
+        log "  file $bin:"
+        file "$bin" 2>&1 | log_pipe
+    fi
+    if command -v readelf >/dev/null 2>&1; then
+        log "  readelf -d $bin | NEEDED:"
+        readelf -d "$bin" 2>/dev/null | grep NEEDED | log_pipe || log "    (keine NEEDED)"
+    fi
+    if command -v ldd >/dev/null 2>&1; then
+        log "  ldd $bin:"
+        ldd "$bin" 2>&1 | log_pipe || true
+    fi
+}
 
-      - name: CMake 3.28.3 installieren
-        run: |
-          apt-get install -y --no-install-recommends wget ca-certificates
-          wget -q https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz
-          tar -xzf cmake-3.28.3-linux-x86_64.tar.gz -C /opt
-          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/cmake  /usr/local/bin/cmake
-          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/ctest  /usr/local/bin/ctest
-          ln -sf /opt/cmake-3.28.3-linux-x86_64/bin/cpack  /usr/local/bin/cpack
-          rm cmake-3.28.3-linux-x86_64.tar.gz
-          cmake --version
+find_gptokeyb() {
+    GPTOKEYB_PATH=""
+    if command -v gptokeyb >/dev/null 2>&1; then
+        GPTOKEYB_PATH="$(command -v gptokeyb)"
+        return 0
+    fi
+    for cand in \
+        "/opt/system/Tools/PortMaster/gptokeyb" \
+        "/opt/system/Tools/gptokeyb" \
+        "/opt/tools/PortMaster/gptokeyb" \
+        "/roms/ports/PortMaster/gptokeyb" \
+        "$PM_CONTROLFOLDER/gptokeyb" \
+        "/usr/local/bin/gptokeyb" \
+        "/usr/bin/gptokeyb" \
+        "/usr/local/sbin/gptokeyb" \
+        "/usr/sbin/gptokeyb"; do
+        if [ -n "$cand" ] && [ -x "$cand" ]; then
+            GPTOKEYB_PATH="$cand"
+            return 0
+        fi
+    done
+    return 1
+}
 
-      - name: Native Build-Tools installieren
-        run: |
-          apt-get install -y --no-install-recommends \
-            build-essential ninja-build git curl wget ca-certificates \
-            pkg-config python3 python3-pip file patchelf \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            unzip p7zip-full libarchive-tools zstd xz-utils
+log_section "WOTS2 START"
+log "SCRIPT_DIR=$SCRIPT_DIR"
+log "GAMEDIR=$GAMEDIR"
+log "Kernel=$(uname -r), Arch=$(uname -m)"
+log "Datum=$(date)"
+log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG"
+log "WOTS2_KILL_TIMEOUT=$WOTS2_KILL_TIMEOUT"
 
-      - name: aarch64 Dev-Pakete installieren
-        run: |
-          apt-get install -y --no-install-recommends \
-            libdrm-dev:arm64 libgbm-dev:arm64 libegl-dev:arm64 \
-            libgles2-mesa-dev:arm64 libasound2-dev:arm64 libudev-dev:arm64 \
-            libarchive-dev:arm64 zlib1g-dev:arm64 libbz2-dev:arm64 \
-            liblzma-dev:arm64 libzstd-dev:arm64 liblz4-dev:arm64 \
-            libwayland-dev:arm64 libpulse-dev:arm64 libxkbcommon-dev:arm64
+# ── LOCK ─────────────────────────────────────────────────────────────
+exec 9> /tmp/wots2-lock 2>/dev/null || true
+if [ -e /proc/self/fd/9 ]; then
+    if ! { flock -n 9 || python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/null; } 2>/dev/null; then
+        log "WOTS2 laeuft bereits."
+        exit 1
+    fi
+fi
 
-      - name: Cross-Sysroot einrichten
-        run: bash scripts/ci-setup-sysroot.sh
+# ── PORTMASTER-CONTROLS ──────────────────────────────────────────────
+PM_CONTROLFOLDER=""
+for candidate in \
+    "/opt/system/Tools/PortMaster" \
+    "/opt/tools/PortMaster" \
+    "$XDG_DATA_HOME/PortMaster" \
+    "/roms/ports/PortMaster"; do
+    [ -d "$candidate" ] && PM_CONTROLFOLDER="$candidate" && break
+done
 
-      - name: SDL2 mit KMSDRM-Patches und ALSA bauen
-        run: bash scripts/ci-build-sdl2.sh
+if [ -n "$PM_CONTROLFOLDER" ] && [ -f "$PM_CONTROLFOLDER/control.txt" ]; then
+    source "$PM_CONTROLFOLDER/control.txt" 2>/dev/null || true
+    if [ -n "${CFW_NAME:-}" ] && [ -f "$PM_CONTROLFOLDER/mod_${CFW_NAME}.txt" ]; then
+        source "$PM_CONTROLFOLDER/mod_${CFW_NAME}.txt" 2>/dev/null || true
+    fi
+    command -v get_controls >/dev/null 2>&1 && get_controls 2>/dev/null || true
+    log "PortMaster control.txt geladen aus $PM_CONTROLFOLDER"
+fi
 
-      - name: Stubs (libmali, libdecor)
-        run: bash scripts/ci-build-stubs.sh
+# ── SDL-GAMECONTROLLER + VOLL-DIAGNOSE ───────────────────────────────
+SDL_DIAG="$GAMEDIR/sdl_diag.txt"
+: > "$SDL_DIAG"
+{
+    echo "=== WOTS2 SDL-Diagnose $(date) ==="
+    echo "--- /proc/bus/input/devices (volle Sektionen, mindestens 60 Zeilen) ---"
+    if [ -f /proc/bus/input/devices ]; then
+        awk '
+            /^I: Bus=/ || /^N: Name=/ || /^P: Phys=/ || /^S: Sysfs=/ || /^U: Uniq=/ || /^H: Handlers=/ || /^B: / { print }
+        ' /proc/bus/input/devices
+    else
+        echo "(nicht lesbar)"
+    fi
+    echo "--- es_input.cfg Kandidaten ---"
+    for f in /userdata/system/configs/emulationstation/es_input.cfg \
+             /usr/share/emulationstation/es_input.cfg; do
+        if [ -f "$f" ]; then
+            echo "### $f"
+            cat "$f"
+            echo "### /$f"
+        fi
+    done
+    echo "--- Hinweis: keine es_input.cfg heisst, sdl_mapping.py gibt nichts aus ---"
+} >> "$SDL_DIAG" 2>&1
 
-      - name: CHD-Extractor (chdman arm64) herunterladen
-        run: |
-          set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/chdman-arm64"
-          cd "$GITHUB_WORKSPACE/chdman-arm64"
-          wget -q -O chdman \
-            "https://unpkg.com/@emmercm/chdman-linux-arm64@${CHDMAN_VERSION}/dist/chdman"
-          wget -q -O LICENSE-chdman.txt \
-            "https://unpkg.com/@emmercm/chdman-linux-arm64@${CHDMAN_VERSION}/LICENSE"
-          chmod 755 chdman
-          file chdman
+if [ -n "${sdl_controllerconfig:-}" ]; then
+    export SDL_GAMECONTROLLERCONFIG="$sdl_controllerconfig"
+    log "SDL_GAMECONTROLLERCONFIG aus PortMaster gesetzt."
+elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
+    SDL_MAP="$(cd "$GAMEDIR" && python3 sdl_mapping.py 2>>"$SDL_DIAG")"
+    if [ -n "$SDL_MAP" ]; then
+        export SDL_GAMECONTROLLERCONFIG="$SDL_MAP"
+        log "SDL_GAMECONTROLLERCONFIG aus sdl_mapping.py gesetzt."
+    else
+        log "sdl_mapping.py hat nichts ausgegeben — SDL faellt auf die interne Datenbank zurueck."
+    fi
+    {
+        echo "--- sdl_mapping.py stdout ---"
+        echo "${SDL_MAP:-（leer）}"
+    } >> "$SDL_DIAG" 2>&1
+fi
 
-      - name: Patches anwenden
-        run: |
-          set -euo pipefail
+if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
+    export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/wots2-gamecontrollerdb.txt"
+    printf '%s\n' "$SDL_GAMECONTROLLERCONFIG" > "$SDL_GAMECONTROLLERCONFIG_FILE" 2>/dev/null || true
+    log "SDL_GAMECONTROLLERCONFIG_FILE gesetzt: $SDL_GAMECONTROLLERCONFIG_FILE"
+else
+    log "Keine SDL_GAMECONTROLLERCONFIG — SDL benutzt die interne Datenbank."
+fi
 
-          find_script() {
-            local name="$1"
-            if [ -f "patches/$name" ]; then echo "patches/$name"
-            elif [ -f "$name" ];      then echo "$name"
-            else echo ""; fi
-          }
+# ── SYSTEMOPTIMIERUNG ────────────────────────────────────────────────
+log_section "SYSTEMOPTIMIERUNG"
 
-          # ── gs.cpp: GLES 3.2 Shader-Version ─────────────────────────
-          S=$(find_script wots2-gles.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+cpu_governor_path=""
+for candidate in \
+    /sys/devices/system/cpu/cpufreq/policy0/scaling_governor \
+    /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor; do
+    [ -w "$candidate" ] && cpu_governor_path="$candidate" && break
+done
+cpu_saved=""
+if [ -n "$cpu_governor_path" ]; then
+    cpu_saved=$(cat "$cpu_governor_path" 2>/dev/null)
+    log "CPU-Governor: $cpu_saved -> performance"
+    echo performance > "$cpu_governor_path" 2>/dev/null || true
+else
+    log "CPU-Governor: kein Pfad gefunden"
+fi
+for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+    [ -w "$cpu/cpufreq/scaling_governor" ] && \
+        echo performance > "$cpu/cpufreq/scaling_governor" 2>/dev/null || true
+done
 
-          # ── gs.cpp: mediump-Qualifier ───────────────────────────────
-          S=$(find_script wots2-gles-precision.py)
-          if [ -n "$S" ]; then
-            echo "== $S =="; python3 "$S" src/hal/gs.cpp
-          else
-            echo "  (wots2-gles-precision.py nicht gefunden — uebersprungen)"
-          fi
+gpu_devfreq_path=""
+for candidate in /sys/class/devfreq/ff400000.gpu /sys/class/devfreq/gpu; do
+    [ -d "$candidate" ] && gpu_devfreq_path="$candidate" && break
+done
+gpu_gov_saved=""; gpu_min_saved=""
+if [ -n "$gpu_devfreq_path" ]; then
+    [ -r "$gpu_devfreq_path/governor" ] && gpu_gov_saved=$(cat "$gpu_devfreq_path/governor" 2>/dev/null)
+    log "GPU-Governor: $gpu_gov_saved -> performance"
+    [ -w "$gpu_devfreq_path/governor" ] && \
+        echo performance > "$gpu_devfreq_path/governor" 2>/dev/null || true
+    if [ -r "$gpu_devfreq_path/available_frequencies" ] && [ -w "$gpu_devfreq_path/min_freq" ]; then
+        gpu_min_saved=$(cat "$gpu_devfreq_path/min_freq" 2>/dev/null)
+        max_freq=$(tr ' ' '\n' < "$gpu_devfreq_path/available_frequencies" | sort -n | tail -n 1)
+        [ -n "$max_freq" ] && echo "$max_freq" > "$gpu_devfreq_path/min_freq" 2>/dev/null || true
+    fi
+else
+    log "GPU-Governor: kein Devfreq-Pfad gefunden"
+fi
 
-          # ── gs.cpp: NEON v3 (Culling-Fix) ───────────────────────────
-          S=$(find_script wots2-neon.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+if ! swapon --show 2>/dev/null | grep -q zram; then
+    modprobe zram 2>/dev/null || true
+    if [ -e /dev/zram0 ]; then
+        if grep -q lz4 /sys/block/zram0/comp_algorithm 2>/dev/null; then
+            echo lz4 > /sys/block/zram0/comp_algorithm 2>/dev/null || true
+            log "ZRAM-Kompressor: lz4"
+        else
+            log "ZRAM-Kompressor: Standard (lzo)"
+        fi
+        echo 512M > /sys/block/zram0/disksize 2>/dev/null || true
+        mkswap /dev/zram0 >/dev/null 2>&1 || true
+        swapon /dev/zram0 2>/dev/null || true
+        log "ZRAM aktiviert."
+    fi
+else
+    log "ZRAM bereits aktiv."
+fi
 
-          # ── gs.cpp: glInvalidateFramebuffer ─────────────────────────
-          S=$(find_script wots2-gs-invalidate.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-invalidate.py nicht gefunden — uebersprungen)"
+WOTS2_SERVICE_STATE="/tmp/wots2-services.$$"
+WOTS2_SERVICES_RESTORED=0
+stop_service_if_active() {
+    local service="$1"
+    if command -v systemctl >/dev/null 2>&1 && \
+       systemctl is-active --quiet "$service" 2>/dev/null; then
+        echo "$service" >> "$WOTS2_SERVICE_STATE" 2>/dev/null || true
+        log "stopping $service"
+        command -v sudo >/dev/null 2>&1 && sudo -n systemctl stop "$service" 2>/dev/null || true
+    fi
+}
+restore_services() {
+    [ "$WOTS2_SERVICES_RESTORED" = "0" ] || return 0
+    WOTS2_SERVICES_RESTORED=1
+    if [ -f "$WOTS2_SERVICE_STATE" ]; then
+        while IFS= read -r service; do
+            [ -n "$service" ] || continue
+            log "restoring $service"
+            command -v sudo >/dev/null 2>&1 && sudo -n systemctl start "$service" 2>/dev/null || true
+        done < "$WOTS2_SERVICE_STATE"
+        rm -f "$WOTS2_SERVICE_STATE" 2>/dev/null || true
+    fi
+}
+: > "$WOTS2_SERVICE_STATE" 2>/dev/null || true
+stop_service_if_active tailscaled.service
 
-          # ── gs.cpp: Shader-Cache v2 ─────────────────────────────────
-          S=$(find_script wots2-gs-shader-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-shader-cache.py nicht gefunden — uebersprungen)"
+saved=/tmp/wots2-clocks
+printf '%s|%s|%s\n' "$cpu_saved" "$gpu_gov_saved" "$gpu_min_saved" > "$saved" 2>/dev/null || true
 
-          # ── gs.cpp: 2D-Batching v3 ──────────────────────────────────
-          S=$(find_script wots2-gs-batch-2d.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-batch-2d.py nicht gefunden — uebersprungen)"
+restore() {
+    log_section "RESTORE"
+    if [ -f "$saved" ]; then
+        IFS='|' read -r cpu_gov gpu_gov gpu_min < "$saved"
+        [ -n "$cpu_gov" ] && [ -n "$cpu_governor_path" ] && [ -w "$cpu_governor_path" ] && \
+            echo "$cpu_gov" > "$cpu_governor_path" 2>/dev/null || true
+        if [ -n "$gpu_devfreq_path" ]; then
+            [ -n "$gpu_gov" ] && [ -w "$gpu_devfreq_path/governor" ] && \
+                echo "$gpu_gov" > "$gpu_devfreq_path/governor" 2>/dev/null || true
+            [ -n "$gpu_min" ] && [ -w "$gpu_devfreq_path/min_freq" ] && \
+                echo "$gpu_min" > "$gpu_devfreq_path/min_freq" 2>/dev/null || true
+        fi
+        rm -f "$saved"
+    fi
+    restore_services
+    rm -f /var/run/battery-saver/wots2.pause 2>/dev/null || true
+    log "Restore abgeschlossen."
+}
+trap restore EXIT
 
-          # ── gs.cpp: glTexStorage2D ──────────────────────────────────
-          S=$(find_script wots2-gs-tex-storage.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-tex-storage.py nicht gefunden — uebersprungen)"
+mkdir -p /var/run/battery-saver 2>/dev/null && \
+    touch /var/run/battery-saver/wots2.pause 2>/dev/null || true
 
-          # ── gs.cpp: Splash (v2, nur gs.cpp) ─────────────────────────
-          S=$(find_script wots2-gs-splash.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-splash.py nicht gefunden — uebersprungen)"
+mkdir -p "$GAMEDIR/wots2_card" "$GAMEDIR/save" "$GAMEDIR/screenshots" \
+         "$GAMEDIR/shader_cache" 2>/dev/null || true
 
-          # ── gs.cpp: Diagnose init() + ES 3.2 ────────────────────────
-          S=$(find_script wots2-gs-init-diag.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-init-diag.py nicht gefunden — uebersprungen)"
+# ── DRI-RECHTE ───────────────────────────────────────────────────────
+log_section "DRI-RECHTE"
+for node in /dev/dri/card0 /dev/dri/renderD128 /dev/fb0; do
+    if [ -e "$node" ]; then
+        if [ ! -r "$node" ] || [ ! -w "$node" ]; then
+            log "$node war nicht les/schreibbar — setze chmod 666"
+            sudo -n chmod 666 "$node" 2>/dev/null || true
+        fi
+        log "$node: $(stat -c '%A %U:%G' "$node" 2>/dev/null)"
+    else
+        log "$node: nicht vorhanden"
+    fi
+done
 
-          # ── gs.cpp: Punktlichter von 16 auf 8 ───────────────────────
-          S=$(find_script wots2-gs-combat.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-combat.py nicht gefunden — uebersprungen)"
+# ── MALI-SYMLINKS ────────────────────────────────────────────────────
+log_section "MALI-SYMLINKS"
+SYSTEM_MALI=""
+for candidate in \
+    /usr/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-gbm.so \
+    /usr/local/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-gbm.so \
+    /usr/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-wayland-gbm.so \
+    /usr/lib/aarch64-linux-gnu/mali/libmali.so \
+    /usr/lib/mali/libmali.so \
+    /usr/lib/aarch64-linux-gnu/libmali.so.1 \
+    /usr/lib/aarch64-linux-gnu/libmali.so \
+    /usr/lib/libmali.so \
+    /usr/local/lib/libmali.so \
+    /usr/lib/aarch64-linux-gnu/libEGL.so.1 \
+    /usr/lib/aarch64-linux-gnu/libEGL.so; do
+    [ -f "$candidate" ] && SYSTEM_MALI="$candidate" && break
+done
 
-          # ── gs.cpp: Perf-Trace (nur mit WOTS2_PERF_TRACE=1 aktiv) ───
-          S=$(find_script wots2-gs-perf-trace.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-perf-trace.py nicht gefunden — uebersprungen)"
+if [ -n "$SYSTEM_MALI" ]; then
+    rm -rf /tmp/wots2-mali
+    mkdir -p /tmp/wots2-mali
+    for name in libmali.so.0 libmali.so.1 libmali.so libEGL.so.1 libEGL.so libGLESv2.so.2 libGLESv2.so libGLESv1_CM.so.1 libGLESv1_CM.so; do
+        ln -sf "$SYSTEM_MALI" "/tmp/wots2-mali/$name"
+    done
+    export LD_LIBRARY_PATH="/tmp/wots2-mali:$GAMEDIR/libs.aarch64:$GAMEDIR:/roms/ports/libs:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}"
+    log "Mali-Blob: $SYSTEM_MALI"
+    log "Symlinks in /tmp/wots2-mali/ erstellt (ohne libgbm)."
+else
+    log "WARNUNG: Kein Mali-Blob gefunden — nutze System-Libraries."
+    export LD_LIBRARY_PATH="$GAMEDIR/libs.aarch64:$GAMEDIR:/roms/ports/libs:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}"
+fi
 
-          # ═══════════════════════════════════════════════════════════
-          # AUSKOMMENTIERT: wots2-persistent-buffers.py
-          # Verdacht auf den weissen Bildschirm. Erst wieder aktivieren,
-          # wenn der Rest sauber laeuft.
-          # ═══════════════════════════════════════════════════════════
-          echo "  (wots2-persistent-buffers.py — bewusst uebersprungen)"
+# ── ALSA-Volume auf Anschlag (RK817) ─────────────────────────────────
+if command -v amixer >/dev/null 2>&1; then
+    for ctrl in Playback Master PCM Speaker Headphone DAC; do
+        amixer -c 0 sset "$ctrl" 100% unmute >/dev/null 2>&1 || true
+    done
+    amixer -c 0 cset numid=1 1 >/dev/null 2>&1 || true
+fi
 
-          # ── Kollision ───────────────────────────────────────────────
-          S=$(find_script wots2-collision-neon.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
+ASOUNDRC="$HOME/.asoundrc"
+if [ -f "$ASOUNDRC" ]; then
+    WOTS2_ASOUNDRC_EXPECTED="$(printf 'pcm.!default { type hw; card 0; device 0 }\nctl.!default { type hw; card 0 }\n')"
+    if [ "$(cat "$ASOUNDRC" 2>/dev/null)" = "$WOTS2_ASOUNDRC_EXPECTED" ]; then
+        mv -f "$ASOUNDRC" "$ASOUNDRC.wots2-backup" 2>/dev/null || rm -f "$ASOUNDRC" 2>/dev/null || true
+        log "Alte .asoundrc gesichert."
+    fi
+fi
 
-          S=$(find_script wots2-collision-relative-neon.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; } \
-                    || echo "  (wots2-collision-relative-neon.py nicht gefunden — uebersprungen)"
+# ── SDL-UMGEBUNG ─────────────────────────────────────────────────────
+export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"
+unset SDL_AUDIODRIVER
+unset AUDIODEV
 
-          # ── Caches ──────────────────────────────────────────────────
-          S=$(find_script wots2-chara-resources-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_resources.cpp; } \
-                    || echo "  (wots2-chara-resources-cache.py nicht gefunden — uebersprungen)"
+# ── WOTS2-PFADE ──────────────────────────────────────────────────────
+export WOTS2_DATA_ROOT="$DATA_ROOT"
+export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 
-          S=$(find_script wots2-chara-mgr-find-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_mgr.cpp; } \
-                    || echo "  (wots2-chara-mgr-find-cache.py nicht gefunden — uebersprungen)"
+# ── RUNTIME-TUNING ───────────────────────────────────────────────────
+export WOTS2_NO_VSYNC=1
+export WOTS2_BUTTON_REMAP=1
 
-          S=$(find_script wots2-chara-body-last-array.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_body.cpp; } \
-                    || echo "  (wots2-chara-body-last-array.py nicht gefunden — uebersprungen)"
+export MALLOC_TRIM_THRESHOLD_=131072
+export MALLOC_MMAP_THRESHOLD_=131072
 
-          S=$(find_script wots2-map-collision-cell-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; } \
-                    || echo "  (wots2-map-collision-cell-cache.py nicht gefunden — uebersprungen)"
+export MALI_AFBC=1
+export MALI_MAX_ASYNC_BUFFER_COUNT=4
+export MALI_BUFFER_PREALLOC=1
 
-          S=$(find_script wots2-fx-scale.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
-                    || echo "  (wots2-fx-scale.py nicht gefunden — uebersprungen)"
+export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
+export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 
-          # ── motion.cpp NEON ─────────────────────────────────────────
-          S=$(find_script wots2-motion-neon.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
-                    || echo "  (wots2-motion-neon.py nicht gefunden — uebersprungen)"
+export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
 
-          # ── SDL2 Pageflip-Nachlauf entfernt ─────────────────────────
-          echo "  (sdl2-pageflip.py laeuft in ci-build-sdl2.sh — kein Nachlauf noetig)"
+# Persistent buffers: zurueckgesetzt auf 0, weil der Verdacht besteht,
+# dass die glMapBufferRange-Variante den weissen Bildschirm verursacht.
+export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-0}"
 
-          # ── port_options.h Defaults ─────────────────────────────────
-          S=$(find_script patch_config_defaults.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (patch_config_defaults.py nicht gefunden — uebersprungen)"
+export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
+export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.4}"
+export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
+export WOTS2_NO_CULL="${WOTS2_NO_CULL:-0}"
+export WOTS2_PERF_TRACE="${WOTS2_PERF_TRACE:-0}"
 
-          echo "== Patches fertig =="
+# ── BINARY-CHECK ─────────────────────────────────────────────────────
+if [ ! -x ./wots2 ]; then
+    log "FEHLER: ./wots2 fehlt oder nicht ausfuehrbar."
+    echo "FEHLER: ./wots2 fehlt." >&2
+    exit 1
+fi
 
-      - name: CMake konfigurieren
-        run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/aarch64-arkos.cmake" \
-            -DSDL2_INSTALL_DIR="$SDL2_INSTALL" \
-            -DWOTS2_GLES=ON \
-            -DSDL2_DIR="$SDL2_INSTALL/lib/cmake/SDL2" \
-            -DCMAKE_PREFIX_PATH="$SDL2_INSTALL;$SYSROOT_LIB" \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DBUILD_SHARED_LIBS=OFF
+# ══════════════════════════════════════════════════════════════════════
+# DIAGNOSE
+# ══════════════════════════════════════════════════════════════════════
+log_section "DIAGNOSE"
 
-      - name: Bauen
-        run: cmake --build build -j "$JOBS"
+log "Umgebung:"
+log "  LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+log "  SDL_VIDEODRIVER=$SDL_VIDEODRIVER"
+log "  SDL_GAMECONTROLLERCONFIG_FILE=${SDL_GAMECONTROLLERCONFIG_FILE:-(nicht gesetzt)}"
+log "  WOTS2_DATA_ROOT=$WOTS2_DATA_ROOT"
+log "  WOTS2_SAVE_ROOT=$WOTS2_SAVE_ROOT"
+log "  WOTS2_SHADER_CACHE=$WOTS2_SHADER_CACHE"
+log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
+log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
+log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
+log "  WOTS2_PERSISTENT_BUFFERS=$WOTS2_PERSISTENT_BUFFERS"
+log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
+log "  WOTS2_SPLASH=$WOTS2_SPLASH"
+log "  WOTS2_PERF_TRACE=$WOTS2_PERF_TRACE"
+log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
-      - name: Binary-Abhängigkeiten protokollieren und prüfen
-        run: |
-          set -euo pipefail
-          echo "== readelf -d | NEEDED =="
-          aarch64-linux-gnu-readelf -d build/wots2 | grep -E 'NEEDED|SONAME' || true
-          echo
-          echo "== Interpreter =="
-          aarch64-linux-gnu-readelf -l build/wots2 | grep -i interpreter || true
-          echo
-          echo "== Größe / Typ =="
-          ls -la build/wots2
-          file build/wots2
-          echo
-          echo "== Prüfe: libstdc++/libgcc_s dürfen NICHT dynamisch sein =="
-          if aarch64-linux-gnu-readelf -d build/wots2 | grep -qE 'NEEDED.*(libstdc\+\+|libgcc_s)'; then
-            echo "FEHLER: libstdc++ oder libgcc_s dynamisch verlinkt — GLIBC-2.31-Kompatibilität gebrochen."
+log ""
+log "Bundle-Bibliotheken (libs.aarch64):"
+if [ -d "$GAMEDIR/libs.aarch64" ]; then
+    ls -la "$GAMEDIR/libs.aarch64" 2>&1 | log_pipe
+    if [ -e "$GAMEDIR/libs.aarch64/libSDL2-2.0.so.0" ]; then
+        log "  OK: libSDL2-2.0.so.0 im Bundle — System-SDL2 wird umgangen."
+    else
+        log "  WARNUNG: libSDL2-2.0.so.0 fehlt in libs.aarch64!"
+    fi
+else
+    log "  (libs.aarch64 fehlt komplett)"
+fi
+
+log ""
+log "Binary ./wots2:"
+log_binary_info "./wots2"
+
+if [ -x "$CHDMAN" ]; then
+    log ""
+    log "Binary ./chdman:"
+    log_binary_info "./chdman"
+fi
+
+log ""
+log "gptokeyb:"
+if find_gptokeyb; then
+    log "  gefunden: $GPTOKEYB_PATH"
+else
+    log "  NICHT gefunden — Kill-Hotkey (Select+Start) faellt aus."
+fi
+
+log ""
+log "SDL-Diagnose-Dump:"
+if [ -f "$SDL_DIAG" ]; then
+    log "  $SDL_DIAG geschrieben ($(wc -l < "$SDL_DIAG") Zeilen)"
+else
+    log "  (nicht geschrieben)"
+fi
+
+LIBDIAG_LOG="$GAMEDIR/wots2-libdiag.txt"
+if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
+    log ""
+    log "WOTS2_LIBDIAG=1: LD_DEBUG=libs Probe (max 5 Sekunden) ..."
+    : > "$LIBDIAG_LOG"
+
+    PROBE_OK=0
+    if command -v timeout >/dev/null 2>&1; then
+        ( LD_DEBUG=libs timeout 5 ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" || PROBE_OK=1
+    else
+        ( LD_DEBUG=libs ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" &
+        DIAG_PID=$!
+        ( sleep 5 && kill -TERM "$DIAG_PID" 2>/dev/null ) &
+        KILLER_PID=$!
+        wait "$DIAG_PID" 2>/dev/null || PROBE_OK=1
+        kill -TERM "$KILLER_PID" 2>/dev/null || true
+        wait "$KILLER_PID" 2>/dev/null || true
+    fi
+
+    if [ -s "$LIBDIAG_LOG" ]; then
+        head -200 "$LIBDIAG_LOG" > "$LIBDIAG_LOG.head"
+        mv -f "$LIBDIAG_LOG.head" "$LIBDIAG_LOG"
+        LINES=$(wc -l < "$LIBDIAG_LOG")
+        log "  $LIBDIAG_LOG geschrieben ($LINES Zeilen)"
+        log "  Erste 20 Zeilen:"
+        head -20 "$LIBDIAG_LOG" | log_pipe
+    else
+        log "  WARNUNG: LD_DEBUG hat nichts geschrieben."
+    fi
+
+    if [ "$PROBE_OK" = "1" ]; then
+        log "  Hinweis: Der Probe-Lauf endete nicht regulaer —"
+        log "  das Spiel ist entweder abgestuerzt oder braucht mehr als 5 Sekunden."
+    fi
+else
+    log ""
+    log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG (Probe uebersprungen)."
+fi
+
+# ══════════════════════════════════════════════════════════════════════
+# HELFER: Entpacker wählen
+# ══════════════════════════════════════════════════════════════════════
+pick_extractor() {
+    if command -v bsdtar >/dev/null 2>&1; then echo "bsdtar"
+    elif command -v 7z     >/dev/null 2>&1; then echo "7z"
+    elif command -v 7za    >/dev/null 2>&1; then echo "7za"
+    elif command -v unzip  >/dev/null 2>&1; then echo "unzip"
+    else echo ""; fi
+}
+
+unpack_image() {
+    local img="$1"
+    local extractor
+    extractor="$(pick_extractor)"
+    if [ -z "$extractor" ]; then
+        log "FEHLER: Kein Entpacker gefunden."
+        return 1
+    fi
+    log "Entpacker: $extractor"
+
+    local tmp="$GAMEDIR/.extract-tmp"
+    rm -rf "$tmp"
+    mkdir -p "$tmp"
+
+    log "Entpacke $img nach $tmp ..."
+    case "$extractor" in
+        bsdtar)
+            bsdtar -xf "$img" -C "$tmp" 2>>"$LOG" || return 1
+            ;;
+        7z|7za)
+            7z x -y -o"$tmp" "$img" >>"$LOG" 2>&1 || return 1
+            ;;
+        unzip)
+            unzip -o "$img" -d "$tmp" >>"$LOG" 2>&1 || return 1
+            ;;
+    esac
+
+    mkdir -p "$EXTRACTED"
+    local subdir
+    subdir="$(find "$tmp" -maxdepth 2 -type d \( -name 'PS2' -o -name 'SLUS*' \) 2>/dev/null | head -n 1)"
+    if [ -n "$subdir" ] && [ -d "$subdir" ]; then
+        log "Verschiebe Inhalt aus $subdir"
+        cp -a "$subdir"/. "$EXTRACTED"/ 2>>"$LOG" || true
+    else
+        cp -a "$tmp"/. "$EXTRACTED"/ 2>>"$LOG" || true
+    fi
+    rm -rf "$tmp"
+    return 0
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# ENTPACKEN
+# ══════════════════════════════════════════════════════════════════════
+log_section "SPIELDATEN ENTPACKEN"
+
+if [ -f "$EXTRACTED/SLUS_208.93" ] || [ -f "$EXTRACTED/slus_208.93" ]; then
+    log "extracted/ enthaelt bereits SLUS_208.93 — ueberspringe Entpacken."
+else
+    NEEDS_UNPACK=1
+
+    CHD_FILE=""
+    for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
+                "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
+        [ -f "$cand" ] && { CHD_FILE="$cand"; break; }
+    done
+
+    if [ -n "$CHD_FILE" ]; then
+        log "CHD gefunden: $CHD_FILE"
+        if [ ! -x "$CHDMAN" ]; then
+            log "FEHLER: chdman nicht gefunden unter $CHDMAN."
+            echo "FEHLER: chdman fehlt." >&2
             exit 1
-          fi
-          echo "OK: keine dynamische libstdc++/libgcc_s."
+        fi
 
-      - name: Bundle vorbereiten
-        run: |
-          set -euo pipefail
-          STAGE="$GITHUB_WORKSPACE/dist"
-          rm -rf "$STAGE"
-          mkdir -p "$STAGE/wots2/libs.aarch64" "$STAGE/wots2/extracted" "$STAGE/wots2/shader_cache"
+        TMP_CHD="$GAMEDIR/.chd-extract"
+        rm -rf "$TMP_CHD"
+        mkdir -p "$TMP_CHD"
+        BASE="$(basename "$CHD_FILE")"
+        BASE="${BASE%.chd}"; BASE="${BASE%.CHD}"
 
-          install -m 755 build/wots2 "$STAGE/wots2/wots2"
-          [ -f port.ini ] && install -m 644 port.ini "$STAGE/wots2/port.ini" || true
-          [ -f WOTS2.sh ] && install -m 755 WOTS2.sh "$STAGE/WOTS2.sh" || true
-          [ -f sdl_mapping.py ] && install -m 755 sdl_mapping.py "$STAGE/wots2/sdl_mapping.py" || true
-          [ -f README.md ] && install -m 644 README.md "$STAGE/README.md" || true
+        log "Extrahiere CHD nach ISO ..."
+        CHD_ISO=""
+        if "$CHDMAN" extractdvd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.iso" >>"$LOG" 2>&1 \
+           && [ -f "$TMP_CHD/$BASE.iso" ]; then
+            CHD_ISO="$TMP_CHD/$BASE.iso"
+            log "extractdvd erfolgreich."
+        elif "$CHDMAN" extractcd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.cue" \
+                                 -ob "$TMP_CHD/$BASE.bin" >>"$LOG" 2>&1 \
+             && [ -f "$TMP_CHD/$BASE.bin" ]; then
+            CHD_ISO="$TMP_CHD/$BASE.bin"
+            log "extractcd erfolgreich (CUE/BIN)."
+        else
+            log "FEHLER: chdman konnte die CHD nicht extrahieren."
+            echo "FEHLER: CHD-Extraktion fehlgeschlagen. Log: $LOG" >&2
+            rm -rf "$TMP_CHD"
+            exit 1
+        fi
 
-          CHD_DIR="$GITHUB_WORKSPACE/chdman-arm64"
-          [ -f "$CHD_DIR/chdman" ] && install -m 755 "$CHD_DIR/chdman" "$STAGE/wots2/chdman"
-          [ -f "$CHD_DIR/LICENSE-chdman.txt" ] && install -m 644 "$CHD_DIR/LICENSE-chdman.txt" "$STAGE/wots2/LICENSE-chdman.txt"
+        log "Entpacke die entstandene ISO/BIN ..."
+        if ! unpack_image "$CHD_ISO"; then
+            log "FEHLER: ISO-Entpacken fehlgeschlagen."
+            echo "FEHLER: ISO-Entpacken fehlgeschlagen. Log: $LOG" >&2
+            rm -rf "$TMP_CHD"
+            exit 1
+        fi
+        rm -rf "$TMP_CHD"
+        log "CHD-Verarbeitung abgeschlossen."
+        NEEDS_UNPACK=0
+    fi
 
-          for lib in build/libs.aarch64/*.so*; do
-            [ -e "$lib" ] && cp -a "$lib" "$STAGE/wots2/libs.aarch64/" || true
-          done
+    if [ "$NEEDS_UNPACK" = "1" ]; then
+        IMG=""
+        for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
+                    "$GAMEDIR"/*.zip "$GAMEDIR"/*.7z "$GAMEDIR"/*.rar \
+                    "$GAMEDIR"/*.tar.* "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/*.zip; do
+            [ -f "$cand" ] && { IMG="$cand"; break; }
+        done
 
-          if [ -d "$SDL2_INSTALL/lib" ]; then
-            for f in "$SDL2_INSTALL/lib"/libSDL2-2.0.so*; do
-              [ -e "$f" ] || continue
-              cp -a "$f" "$STAGE/wots2/libs.aarch64/"
-            done
-          fi
+        if [ -z "$IMG" ]; then
+            log "FEHLER: Kein Disc-Image und keine CHD gefunden."
+            echo "FEHLER: Bitte 'wots2.chd' oder 'wots2.iso' in $GAMEDIR ablegen." >&2
+            exit 1
+        fi
+        log "Disc-Image: $IMG"
 
-          find "$STAGE" -type d -exec chmod 755 {} \;
-          find "$STAGE" -type f -exec chmod 644 {} \;
-          chmod 755 "$STAGE/WOTS2.sh" "$STAGE/wots2/wots2"
-          [ -f "$STAGE/wots2/sdl_mapping.py" ] && chmod 755 "$STAGE/wots2/sdl_mapping.py" || true
-          [ -f "$STAGE/wots2/chdman" ] && chmod 755 "$STAGE/wots2/chdman" || true
+        if ! unpack_image "$IMG"; then
+            log "FEHLER: Entpacken fehlgeschlagen."
+            echo "FEHLER: Entpacken fehlgeschlagen. Log: $LOG" >&2
+            exit 1
+        fi
+    fi
 
-          touch "$STAGE/wots2/extracted/.gitkeep" "$STAGE/wots2/shader_cache/.gitkeep"
-          find "$STAGE" -maxdepth 3 -printf '  %M %8s  %p\n'
+    log "Inhalt von extracted/:"
+    ls -la "$EXTRACTED" | head -20 | log_pipe
 
-      - name: Tarball erzeugen
-        run: |
-          set -euo pipefail
-          cd dist
-          tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh README.md 2>/dev/null || \
-            tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh
-          echo "== tar =="
-          tar -tzf wots2-rk3326.tar.gz | head -40
-          ls -la
+    if [ ! -f "$EXTRACTED/SLUS_208.93" ] && [ ! -f "$EXTRACTED/slus_208.93" ]; then
+        log "FEHLER: SLUS_208.93 fehlt in extracted/."
+        echo "FEHLER: SLUS_208.93 fehlt. Log: $LOG" >&2
+        find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | log_pipe
+        exit 1
+    fi
+    log "SLUS_208.93 vorhanden — Entpacken OK."
+fi
 
-      - name: Upload Artefakt (Bundle)
-        uses: actions/upload-artifact@v4
-        with:
-          name: wots2-rk3326
-          path: dist/wots2-rk3326.tar.gz
-          retention-days: 30
-          if-no-files-found: error
+# ══════════════════════════════════════════════════════════════════════
+# SPIELSTART
+# ══════════════════════════════════════════════════════════════════════
+log_section "SPIELSTART"
+log "Starte: ./wots2 extracted"
 
-      - name: Fehleranalyse
-        if: always()
-        run: bash scripts/ci-error-report.sh || true
+WOTS2_STDOUT="$GAMEDIR/wots2-stdout.txt"
+WOTS2_STDERR="$GAMEDIR/wots2-stderr.txt"
+: > "$WOTS2_STDOUT"
+: > "$WOTS2_STDERR"
 
-      - name: Upload Fehleranalyse
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: error-analysis
-          path: build-error-analysis.txt
-          if-no-files-found: warn
-          retention-days: 30
+WOTS2_PID=""
+GPTOKEYB_PID=""
+
+kill_wots2_escalate() {
+    [ -z "$WOTS2_PID" ] && return 0
+    if ! kill -0 "$WOTS2_PID" 2>/dev/null; then
+        return 0
+    fi
+    log "sende SIGTERM an wots2 (PID $WOTS2_PID)"
+    kill -TERM "$WOTS2_PID" 2>/dev/null || true
+    local elapsed=0
+    while [ "$elapsed" -lt "$WOTS2_KILL_TIMEOUT" ]; do
+        kill -0 "$WOTS2_PID" 2>/dev/null || { log "wots2 sauber beendet."; return 0; }
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    log "wots2 reagiert nicht nach ${WOTS2_KILL_TIMEOUT}s — sende SIGKILL"
+    kill -KILL "$WOTS2_PID" 2>/dev/null || true
+    sleep 1
+    return 0
+}
+
+cleanup_all() {
+    if [ -n "$GPTOKEYB_PID" ] && kill -0 "$GPTOKEYB_PID" 2>/dev/null; then
+        kill -TERM "$GPTOKEYB_PID" 2>/dev/null || true
+        sleep 0.3
+        kill -KILL "$GPTOKEYB_PID" 2>/dev/null || true
+    fi
+    kill_wots2_escalate
+    restore
+}
+
+on_signal() {
+    log "Signal empfangen — beende."
+    kill_wots2_escalate
+}
+
+if find_gptokeyb; then
+    "$GPTOKEYB_PATH" "./wots2" -k "wots2" >/dev/null 2>&1 &
+    GPTOKEYB_PID=$!
+    log "gptokeyb gestartet (PID $GPTOKEYB_PID) — Kill-Hotkey Select+Start."
+else
+    log "gptokeyb nicht gefunden — Kill-Hotkey faellt aus."
+fi
+
+trap cleanup_all EXIT
+trap on_signal TERM INT HUP
+
+./wots2 extracted > "$WOTS2_STDOUT" 2> "$WOTS2_STDERR" &
+WOTS2_PID=$!
+log "PID=$WOTS2_PID"
+
+WOTS2_STATUS=0
+while true; do
+    wait "$WOTS2_PID"
+    WOTS2_STATUS=$?
+    kill -0 "$WOTS2_PID" 2>/dev/null || break
+    log "wait wurde unterbrochen, wots2 laeuft noch — warte erneut."
+done
+
+if [ -n "$GPTOKEYB_PID" ] && kill -0 "$GPTOKEYB_PID" 2>/dev/null; then
+    kill -TERM "$GPTOKEYB_PID" 2>/dev/null || true
+    wait "$GPTOKEYB_PID" 2>/dev/null || true
+fi
+
+log "wots2 beendet mit Status $WOTS2_STATUS"
+
+if [ "$WOTS2_STATUS" -gt 128 ]; then
+    SIGNAL=$((WOTS2_STATUS - 128))
+    case "$SIGNAL" in
+        4)  SIGNAME="SIGILL — Illegal Instruction (auf Cortex-A35 oft eine LSE-Atomic oder falsche CPU-Flags)" ;;
+        6)  SIGNAME="SIGABRT — Abort (meist eine fehlgeschlagene Zusicherung)" ;;
+        7)  SIGNAME="SIGBUS — Bus Error (meist ein Speicherzugriff auf eine ungueltige Adresse)" ;;
+        8)  SIGNAME="SIGFPE — Floating-Point Exception" ;;
+        9)  SIGNAME="SIGKILL — hart abgeschossen (Launcher-Eskalation oder OOM-Killer)" ;;
+        11) SIGNAME="SIGSEGV — Segmentation Fault (Null-Dereferenz oder Stack-Ueberlauf)" ;;
+        15) SIGNAME="SIGTERM — regulaer beendet" ;;
+        *)  SIGNAME="Signal $SIGNAL" ;;
+    esac
+    log "wots2 wurde durch $SIGNAME getoetet."
+fi
+
+if [ -s "$WOTS2_STDOUT" ]; then
+    log ""
+    log "Auszug aus wots2-stdout.txt (letzte 40 Zeilen):"
+    tail -40 "$WOTS2_STDOUT" | log_pipe
+else
+    log "wots2-stdout.txt ist leer."
+fi
+
+if [ -s "$WOTS2_STDERR" ]; then
+    log ""
+    log "Auszug aus wots2-stderr.txt (letzte 40 Zeilen):"
+    tail -40 "$WOTS2_STDERR" | log_pipe
+
+    log ""
+    log "Erkannte Fehlermuster in wots2-stderr.txt:"
+    if grep -q "shader error" "$WOTS2_STDERR"; then
+        log "  - Shader-Kompilierung fehlgeschlagen: siehe [GS] shader error"
+    fi
+    if grep -q "link error" "$WOTS2_STDERR"; then
+        log "  - Shader-Link fehlgeschlagen: siehe [GS] link error"
+    fi
+    if grep -q "no OpenGL 3.3" "$WOTS2_STDERR"; then
+        log "  - Kein OpenGL-3.x-Kontext — Mali-Blob oder EGL-Config stimmt nicht"
+    fi
+    if grep -q "not found" "$WOTS2_STDERR"; then
+        log "  - Eine Bibliothek wurde nicht gefunden"
+    fi
+    if grep -q "SDL_CreateWindow" "$WOTS2_STDERR"; then
+        log "  - SDL_CreateWindow ist gescheitert — evtl. KMSDRM-Problem"
+    fi
+    if grep -q "GLIBCXX" "$WOTS2_STDERR"; then
+        log "  - GLIBCXX-Version zu alt — sollte durch -static-libstdc++ nicht passieren"
+    fi
+    if grep -q "Segmentation fault" "$WOTS2_STDERR"; then
+        log "  - Segmentation Fault"
+    fi
+    grep -c "" "$WOTS2_STDERR" 2>/dev/null | {
+        read -r n; log "  (stderr hat $n Zeilen insgesamt)"
+    }
+else
+    log "wots2-stderr.txt ist leer."
+fi
+
+log_section "ENDE"
+sync
+exit "$WOTS2_STATUS"
