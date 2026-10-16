@@ -3,15 +3,16 @@
 patches/wots2-pad-swap.py
 
 Tauscht die Zuordnung der SDL-Facebuttons fuer den M9 Pro / R36S.
-Auf diesem Geraet meldet die Firmware A und B (und X und Y) vertauscht
+Auf diesem Geraet meldet die Firmware die Buttons vertauscht
 gegenueber der physischen Beschriftung. Der Patch vertauscht die
-Zuordnung in pad.cpp, damit die Beschriftung auf dem Geraet mit der
-Funktion im Spiel uebereinstimmt:
+Zuordnung in pad.cpp, damit die Beschriftung auf dem Geraet mit
+der Funktion im Spiel uebereinstimmt.
 
-  SDL_CONTROLLER_BUTTON_B  -> PS2 CROSS
-  SDL_CONTROLLER_BUTTON_A  -> PS2 CIRCLE
-  SDL_CONTROLLER_BUTTON_Y  -> PS2 SQUARE
-  SDL_CONTROLLER_BUTTON_X  -> PS2 TRIANGLE
+PS2-Belegung (Way of the Samurai 2):
+  SDL_CONTROLLER_BUTTON_B  -> PS2 CROSS       (physisch unten)
+  SDL_CONTROLLER_BUTTON_A  -> PS2 CIRCLE      (physisch rechts)
+  SDL_CONTROLLER_BUTTON_Y  -> PS2 SQUARE      (physisch links)
+  SDL_CONTROLLER_BUTTON_X  -> PS2 TRIANGLE    (physisch oben)
 
 Idempotent: Marker 'wots2-pad-swap.py'.
 
@@ -23,13 +24,17 @@ import sys
 
 MARKER = "wots2-pad-swap.py"
 
-OLD = """    static constexpr struct { SDL_GameControllerButton from; Button to; } kButtons[] = {
+OLD_BUTTONS = """    static constexpr struct { SDL_GameControllerButton from; Button to; } kButtons[] = {
         {SDL_CONTROLLER_BUTTON_A, CROSS}, {SDL_CONTROLLER_BUTTON_B, CIRCLE},
         {SDL_CONTROLLER_BUTTON_X, SQUARE}, {SDL_CONTROLLER_BUTTON_Y, TRIANGLE},"""
 
-NEW = """    // " + MARKER + "
+NEW_BUTTONS = """    // " + MARKER + "
     // A/B und X/Y vertauscht: der Geraetetreiber meldet die physischen
-    // Buttons anders als SDL erwartet.
+    // Buttons anders als SDL erwartet. Auf dem R36S/M9:
+    //   physisch unten  -> SDL B  -> PS2 Cross
+    //   physisch rechts -> SDL A  -> PS2 Circle
+    //   physisch links  -> SDL Y  -> PS2 Square
+    //   physisch oben   -> SDL X  -> PS2 Triangle
     static constexpr struct { SDL_GameControllerButton from; Button to; } kButtons[] = {
         {SDL_CONTROLLER_BUTTON_B, CROSS}, {SDL_CONTROLLER_BUTTON_A, CIRCLE},
         {SDL_CONTROLLER_BUTTON_Y, SQUARE}, {SDL_CONTROLLER_BUTTON_X, TRIANGLE},"""
@@ -44,11 +49,10 @@ def patch(path):
     if MARKER in t:
         print("  Pad-Swap bereits vorhanden.")
         return
-    if OLD not in t:
-        print("  FEHLER: kButtons-Block in der erwarteten Form nicht gefunden.")
-        print("  Moeglicherweise wurde pad.cpp zwischenzeitlich geaendert.")
+    if OLD_BUTTONS not in t:
+        print("  FEHLER: kButtons-Block nicht in der erwarteten Form gefunden.")
         sys.exit(1)
-    t = t.replace(OLD, NEW, 1)
+    t = t.replace(OLD_BUTTONS, NEW_BUTTONS, 1)
     p.write_text(t)
     print("  Pad-Swap angewendet (A<->B, X<->Y).")
 
