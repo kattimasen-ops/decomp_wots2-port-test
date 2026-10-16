@@ -199,6 +199,11 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-splash.py nicht gefunden — uebersprungen)"
 
+          # ── gs.cpp: Diagnose init() + GL-Profil auf ES ──────────────
+          S=$(find_script wots2-gs-init-diag.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-init-diag.py nicht gefunden — uebersprungen)"
+
           # ── collision_world.cpp: NEON Apply + Towards + Distance ────
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
@@ -233,11 +238,10 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
                     || echo "  (wots2-fx-scale.py nicht gefunden — uebersprungen)"
 
-          # ── SDL2 KMSDRM Pageflip-Patch ──────────────────────────────
-          # Hinweis: Der Pageflip-Patch UND der Window-Flag-Patch laufen
-          # bereits in scripts/ci-build-sdl2.sh gegen den Quellbaum.
-          # Der hier ist der alte Nachlauf gegen den Install-Tree und
-          # ist harmlos, weil idempotent.
+          # ── SDL2 KMSDRM Pageflip-Patch (Install-Tree, Nachlauf) ─────
+          # Hinweis: Der Pageflip- und der Window-Flag-Patch laufen bereits
+          # in scripts/ci-build-sdl2.sh gegen den Quellbaum. Der hier ist
+          # der alte Nachlauf gegen den Install-Tree, idempotent, harmlos.
           S=$(find_script sdl2-pageflip.py)
           if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
             echo "== $S (SDL2-Install-Tree, Nachlauf) =="
