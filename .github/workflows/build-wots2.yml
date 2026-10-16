@@ -152,6 +152,11 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-batch-2d.py nicht gefunden)"
 
+          # ── 3D-Merge (wots2-merge-3d-draws.py) ──────────────────────
+          S=$(find_script wots2-merge-3d-draws.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-merge-3d-draws.py nicht gefunden)"
+
           # ── Splash (v2, nur gs.cpp) ─────────────────────────────────
           S=$(find_script wots2-gs-splash.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
@@ -203,6 +208,16 @@ jobs:
           S=$(find_script wots2-map-collision-cell-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; } \
                     || echo "  (wots2-map-collision-cell-cache.py nicht gefunden)"
+
+          # ── NPC-LOD (wots2-npc-lod-closer.py) ───────────────────────
+          S=$(find_script wots2-npc-lod-closer.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
+                    || echo "  (wots2-npc-lod-closer.py nicht gefunden)"
+
+          # ── NPC-Max-Dist (wots2-npc-max-dist.py, optional) ──────────
+          S=$(find_script wots2-npc-max-dist.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
+                    || echo "  (wots2-npc-max-dist.py nicht gefunden)"
 
           # ── FX-Scale ────────────────────────────────────────────────
           S=$(find_script wots2-fx-scale.py)
