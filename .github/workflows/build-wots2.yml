@@ -213,6 +213,21 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_resources.cpp; } \
                     || echo "  (wots2-chara-resources-cache.py nicht gefunden — uebersprungen)"
 
+          # ── chara_mgr.cpp: Cache fuer CharaMgr_Find ─────────────────
+          S=$(find_script wots2-chara-mgr-find-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_mgr.cpp; } \
+                    || echo "  (wots2-chara-mgr-find-cache.py nicht gefunden — uebersprungen)"
+
+          # ── chara_body.cpp: Last-Array statt std::map ───────────────
+          S=$(find_script wots2-chara-body-last-array.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_body.cpp; } \
+                    || echo "  (wots2-chara-body-last-array.py nicht gefunden — uebersprungen)"
+
+          # ── map_collision.cpp: Cell-Cache ───────────────────────────
+          S=$(find_script wots2-map-collision-cell-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; } \
+                    || echo "  (wots2-map-collision-cell-cache.py nicht gefunden — uebersprungen)"
+
           # ── world_effects.cpp: FX-Anzahl skalieren ──────────────────
           S=$(find_script wots2-fx-scale.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
