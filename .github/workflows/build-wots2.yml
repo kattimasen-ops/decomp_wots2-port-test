@@ -135,14 +135,6 @@ jobs:
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # ── gs.cpp: opt-in persistente Buffer ───────────────────────
-          S=$(find_script wots2-persistent-buffers.py)
-          if [ -n "$S" ]; then
-            echo "== $S =="; python3 "$S" src/hal/gs.cpp
-          else
-            echo "  (wots2-persistent-buffers.py nicht gefunden — uebersprungen)"
-          fi
-
           # ── gs.cpp: glInvalidateFramebuffer ─────────────────────────
           S=$(find_script wots2-gs-invalidate.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
@@ -163,11 +155,10 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-tex-storage.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: SPLASH — ENTFERNT ──────────────────────────────
-          # Der Splash-Patch (wots2-gs-splash.py) wird NICHT mehr angewendet.
-          # Er war der letzte Zusatz vor dem schwarzen Bild. Sobald der
-          # Rest wieder laeuft, koennen wir ihn einzeln testen.
-          echo "  (wots2-gs-splash.py — bewusst uebersprungen)"
+          # ── gs.cpp: Splash (v2, nur gs.cpp) ─────────────────────────
+          S=$(find_script wots2-gs-splash.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-splash.py nicht gefunden — uebersprungen)"
 
           # ── gs.cpp: Diagnose init() + ES 3.2 ────────────────────────
           S=$(find_script wots2-gs-init-diag.py)
@@ -179,10 +170,17 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-combat.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: Perf-Trace ──────────────────────────────────────
+          # ── gs.cpp: Perf-Trace (nur mit WOTS2_PERF_TRACE=1 aktiv) ───
           S=$(find_script wots2-gs-perf-trace.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-perf-trace.py nicht gefunden — uebersprungen)"
+
+          # ═══════════════════════════════════════════════════════════
+          # AUSKOMMENTIERT: wots2-persistent-buffers.py
+          # Verdacht auf den weissen Bildschirm. Erst wieder aktivieren,
+          # wenn der Rest sauber laeuft.
+          # ═══════════════════════════════════════════════════════════
+          echo "  (wots2-persistent-buffers.py — bewusst uebersprungen)"
 
           # ── Kollision ───────────────────────────────────────────────
           S=$(find_script wots2-collision-neon.py)
@@ -218,12 +216,8 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
                     || echo "  (wots2-motion-neon.py nicht gefunden — uebersprungen)"
 
-          # ── SDL2 Pageflip-Nachlauf ──────────────────────────────────
-          S=$(find_script sdl2-pageflip.py)
-          if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
-            echo "== $S (Install-Tree, Nachlauf) =="
-            python3 "$S" "$SDL2_INSTALL/.." || true
-          fi
+          # ── SDL2 Pageflip-Nachlauf entfernt ─────────────────────────
+          echo "  (sdl2-pageflip.py laeuft in ci-build-sdl2.sh — kein Nachlauf noetig)"
 
           # ── port_options.h Defaults ─────────────────────────────────
           S=$(find_script patch_config_defaults.py)
@@ -246,14 +240,25 @@ jobs:
       - name: Bauen
         run: cmake --build build -j "$JOBS"
 
-      - name: Binary-Abhängigkeiten protokollieren
+      - name: Binary-Abhängigkeiten protokollieren und prüfen
         run: |
           set -euo pipefail
-          echo "== readelf -d =="
+          echo "== readelf -d | NEEDED =="
           aarch64-linux-gnu-readelf -d build/wots2 | grep -E 'NEEDED|SONAME' || true
+          echo
+          echo "== Interpreter =="
           aarch64-linux-gnu-readelf -l build/wots2 | grep -i interpreter || true
+          echo
+          echo "== Größe / Typ =="
           ls -la build/wots2
           file build/wots2
+          echo
+          echo "== Prüfe: libstdc++/libgcc_s dürfen NICHT dynamisch sein =="
+          if aarch64-linux-gnu-readelf -d build/wots2 | grep -qE 'NEEDED.*(libstdc\+\+|libgcc_s)'; then
+            echo "FEHLER: libstdc++ oder libgcc_s dynamisch verlinkt — GLIBC-2.31-Kompatibilität gebrochen."
+            exit 1
+          fi
+          echo "OK: keine dynamische libstdc++/libgcc_s."
 
       - name: Bundle vorbereiten
         run: |
@@ -261,6 +266,7 @@ jobs:
           STAGE="$GITHUB_WORKSPACE/dist"
           rm -rf "$STAGE"
           mkdir -p "$STAGE/wots2/libs.aarch64" "$STAGE/wots2/extracted" "$STAGE/wots2/shader_cache"
+
           install -m 755 build/wots2 "$STAGE/wots2/wots2"
           [ -f port.ini ] && install -m 644 port.ini "$STAGE/wots2/port.ini" || true
           [ -f WOTS2.sh ] && install -m 755 WOTS2.sh "$STAGE/WOTS2.sh" || true
@@ -305,13 +311,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wots2-rk3326
-          path: |
-            dist/wots2-rk3326.tar.gz
-            dist/WOTS2.sh
-            dist/wots2/
-            dist/README.md
+          path: dist/wots2-rk3326.tar.gz
           retention-days: 30
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Fehleranalyse
         if: always()
