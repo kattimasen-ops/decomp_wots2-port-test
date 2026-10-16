@@ -29,6 +29,7 @@ jobs:
       PKG_CONFIG_PATH: ${{ github.workspace }}/sysroot/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
       JOBS: "4"
       CHDMAN_VERSION: "0.288.1"
+      WOTS2_FX_SCALE: "0.4"
 
     steps:
       - name: Checkout
@@ -184,7 +185,7 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-shader-cache.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: 2D-Draw-Call-Batching ───────────────────────────
+          # ── gs.cpp: 2D-Draw-Call-Batching (v3) ──────────────────────
           S=$(find_script wots2-gs-batch-2d.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-batch-2d.py nicht gefunden — uebersprungen)"
@@ -203,6 +204,11 @@ jobs:
           S=$(find_script wots2-gs-init-diag.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-init-diag.py nicht gefunden — uebersprungen)"
+
+          # ── gs.cpp: Punktlichter im Shader von 16 auf 8 ─────────────
+          S=$(find_script wots2-gs-combat.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-combat.py nicht gefunden — uebersprungen)"
 
           # ── collision_world.cpp: NEON Apply + Towards + Distance ────
           S=$(find_script wots2-collision-neon.py)
@@ -238,7 +244,7 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
                     || echo "  (wots2-fx-scale.py nicht gefunden — uebersprungen)"
 
-          # ── motion.cpp: NEON fuer Vektor-Operationen (NEU) ──────────
+          # ── motion.cpp: NEON fuer Vektor-Operationen ────────────────
           S=$(find_script wots2-motion-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
                     || echo "  (wots2-motion-neon.py nicht gefunden — uebersprungen)"
@@ -330,10 +336,6 @@ jobs:
           done
 
           # ── Gepatchte SDL2 ins Bundle ────────────────────────────────
-          # Ohne diese Kopie laedt die Binary auf dem Geraet die
-          # System-SDL2 von ArkOS — die hat den KMSDRM-Pageflip-Patch
-          # NICHT und ist in manchen Versionen zu alt fuer den
-          # Window-Flag-Fix. Ergebnis auf dem M9: "Invalid window".
           if [ -d "$SDL2_INSTALL/lib" ]; then
             for f in "$SDL2_INSTALL/lib"/libSDL2-2.0.so*; do
               [ -e "$f" ] || continue
