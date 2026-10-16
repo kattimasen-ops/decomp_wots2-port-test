@@ -40,6 +40,13 @@ jobs:
       - name: Git Safe Directory
         run: git config --global --add safe.directory "*" || true
 
+      - name: Repo-Struktur prüfen
+        run: |
+          echo "== Root =="; ls -la
+          echo "== patches/ =="; ls -la patches/ || true
+          echo "== scripts/ =="; ls -la scripts/ || true
+          echo "== cmake/ =="; ls -la cmake/ || true
+
       - name: aarch64 Multiarch aktivieren
         run: |
           dpkg --add-architecture arm64
@@ -99,6 +106,7 @@ jobs:
           wget -q -O LICENSE-chdman.txt \
             "https://unpkg.com/@emmercm/chdman-linux-arm64@${CHDMAN_VERSION}/LICENSE"
           chmod 755 chdman
+          file chdman
 
       - name: Patches anwenden
         run: |
@@ -140,23 +148,23 @@ jobs:
                     || echo "  (wots2-gs-init-diag.py nicht gefunden)"
 
           # ════════════════════════════════════════════════════════════
+          # AUS: diese sechs Patches haben das schwarze/weisse Bild
+          # verursacht. Sie werden EINZELN wieder aktiviert, sobald die
+          # Performance-Basis sauber laeuft.
+          #
           # AUS: wots2-gs-shader-cache.py
           # AUS: wots2-gs-batch-2d.py
           # AUS: wots2-gs-combat.py
           # AUS: wots2-gs-splash.py
           # AUS: wots2-gs-perf-trace.py
           # AUS: wots2-persistent-buffers.py
-          #
-          # Diese sechs Patches sind verdaechtig fuer den schwarzen/weissen
-          # Bildschirm. Sie werden EINZELN wieder aktiviert, sobald das
-          # Bild wieder da ist — mit Test dazwischen.
           # ════════════════════════════════════════════════════════════
-          echo "  (wots2-gs-shader-cache.py — AUS)"
-          echo "  (wots2-gs-batch-2d.py     — AUS)"
-          echo "  (wots2-gs-combat.py       — AUS)"
-          echo "  (wots2-gs-splash.py       — AUS)"
-          echo "  (wots2-gs-perf-trace.py   — AUS)"
-          echo "  (wots2-persistent-buffers.py — AUS)"
+          echo "  (wots2-gs-shader-cache.py     — AUS)"
+          echo "  (wots2-gs-batch-2d.py         — AUS)"
+          echo "  (wots2-gs-combat.py           — AUS)"
+          echo "  (wots2-gs-splash.py           — AUS)"
+          echo "  (wots2-gs-perf-trace.py       — AUS)"
+          echo "  (wots2-persistent-buffers.py  — AUS)"
 
           # ── Kollision ───────────────────────────────────────────────
           S=$(find_script wots2-collision-neon.py)
@@ -192,6 +200,11 @@ jobs:
           S=$(find_script wots2-motion-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
                     || echo "  (wots2-motion-neon.py nicht gefunden)"
+
+          # ── pad.cpp: A<->B, X<->Y (M9 Pro / R36S) ───────────────────
+          S=$(find_script wots2-pad-swap.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/pad.cpp; } \
+                    || echo "  (wots2-pad-swap.py nicht gefunden — uebersprungen)"
 
           # ── port_options.h Defaults ─────────────────────────────────
           S=$(find_script patch_config_defaults.py)
@@ -265,6 +278,8 @@ jobs:
           cd dist
           tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh README.md 2>/dev/null || \
             tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh
+          echo "== tar =="
+          tar -tzf wots2-rk3326.tar.gz | head -40
           ls -la
 
       - name: Upload Artefakt (Bundle)
