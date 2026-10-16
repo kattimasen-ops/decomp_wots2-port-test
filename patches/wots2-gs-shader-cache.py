@@ -7,8 +7,7 @@ Hintergrund (Halo CE Port, identische GPU):
   Shader-Management ca. 50 MB Speicher freigegeben und Stottern in
   spaeteren Levels reduziert. Die Mali-G31 hat einen sehr kleinen
   Shader-Speicher; ARM empfiehlt glGetProgramBinary/glProgramBinary
-  zum Cachen. Auf einem 1-GB-System ist das Freigeben ungenutzter
-  Programme oft wertvoller als das Cachen selbst.
+  zum Cachen.
 
 Was der Patch macht:
   1. Setzt GL_PROGRAM_BINARY_RETRIEVABLE_HINT vor jedem glLinkProgram.
@@ -19,13 +18,24 @@ Was der Patch macht:
   4. Treiber-Version (GL_VERSION + GL_RENDERER) als Cache-Key:
      nach einem Mali-Update wird der Cache invalidiert.
   5. LRU-Unload: Programme, die seit N Frames nicht gebunden wurden,
-     werden via glDeleteProgram freigegeben (Halo-Effekt).
+     werden via glDeleteProgram freigegeben.
+
+Revision v2 — Reparatur:
+  Die vorherige Version hat wots2_link_cached() zwar definiert, aber
+  nie aufgerufen: link() ging weiter direkt auf glLinkProgram. Der
+  Cache-Ordner blieb leer. Jetzt patcht diese Version die link()-
+  Funktion selbst so, dass sie intern wots2_link_cached() aufruft.
+  Der Cache-Tag wird aus dem Hash der Shader-Quelltexte gebildet,
+  damit unterschiedliche Shader verschiedene Cache-Eintraege bekommen.
 
 Steuerung per Env:
-  WOTS2_SHADER_CACHE=0  → Cache aus (Default: an)
-  WOTS2_SHADER_LRU=N    → N Frames ohne Bindung bis Unload (Default: 600)
+  WOTS2_SHADER_CACHE=0  -> Cache aus (Default: an)
+  WOTS2_SHADER_LRU=N    -> N Frames ohne Bindung bis Unload (Default: 600)
 
-Python 3.6+ kompatibel.
+Zieldatei: src/hal/gs.cpp
+Marker:    wots2_shader_cache_init
+
+Aufruf:    python3 patches/wots2-gs-shader-cache.py src/hal/gs.cpp
 """
 import re
 import sys
@@ -49,7 +59,6 @@ static bool  s_shaderCacheEnabled = true;
 static int   s_shaderLruFrames = 600;
 static char  s_shaderCacheDir[512] = {};
 static uint64_t s_shaderDriverKey = 0;
-static int   s_shaderCacheHits = 0, s_shaderCacheMisses = 0;
 
 static uint64_t wots2_hash_str(const char* s) {
     // FNV-1a 64-bit
@@ -70,24 +79,15 @@ static void wots2_shader_cache_init(const char* data_root) {
     if (data_root && data_root[0]) {
         snprintf(s_shaderCacheDir, sizeof(s_shaderCacheDir),
                  "%s/shader_cache", data_root);
-        // Verzeichnis anlegen (mkdir -p Fallback)
         char cmd[600];
         snprintf(cmd, sizeof(cmd), "mkdir -p '%s' 2>/dev/null", s_shaderCacheDir);
         if (system(cmd) != 0) { /* ignorieren */ }
     }
-    // Treiber-Schluessel aus GL_VERSION und GL_RENDERER
     const char* ver = (const char*)glGetString(GL_VERSION);
     const char* ren = (const char*)glGetString(GL_RENDERER);
     s_shaderDriverKey = wots2_hash_str(ver ? ver : "?") ^ (wots2_hash_str(ren ? ren : "?") << 1);
     fprintf(stderr, "[shader-cache] aktiviert, dir=%s, driver=%08llx\n",
             s_shaderCacheDir, (unsigned long long)s_shaderDriverKey);
-}
-
-static void wots2_shader_cache_flush(void) {
-    for (auto& e : s_programCache) {
-        glDeleteProgram(e.program);
-    }
-    s_programCache.clear();
 }
 
 // Nach glLinkProgram: Binary holen und ablegen.
@@ -96,17 +96,14 @@ static void wots2_shader_cache_store(GLuint program, const char* tag) {
         return;
     GLint len = 0;
     glGetProgramiv(program, GL_PROGRAM_BINARY_LENGTH, &len);
-    if (len <= 0) {
-        s_shaderCacheMisses++;
+    if (len <= 0)
         return;
-    }
     std::vector<unsigned char> buf((size_t)len);
     GLenum fmt = 0;
     GLsizei got = 0;
     glGetProgramBinary(program, len, &got, &fmt, buf.data());
     if (got <= 0)
         return;
-    // Dateiname aus Tag + Treiber-Key
     char path[700];
     snprintf(path, sizeof(path), "%s/%s_%08llx.bin",
              s_shaderCacheDir, tag, (unsigned long long)(s_shaderDriverKey & 0xFFFFFFFF));
@@ -152,11 +149,8 @@ static bool wots2_shader_cache_load(GLuint program, const char* tag) {
     glProgramBinary(program, (GLenum)glFmt, buf.data(), (GLsizei)len32);
     GLint ok = 0;
     glGetProgramiv(program, GL_LINK_STATUS, &ok);
-    if (ok) {
-        s_shaderCacheHits++;
+    if (ok)
         return true;
-    }
-    s_shaderCacheMisses++;
     remove(path);
     return false;
 }
@@ -165,7 +159,6 @@ static bool wots2_shader_cache_load(GLuint program, const char* tag) {
 static void wots2_shader_cache_tick(int frame) {
     if (!s_shaderCacheEnabled || s_shaderLruFrames <= 0)
         return;
-    // (kein Unload im ersten Frame)
     if (frame < 60)
         return;
     for (size_t i = 0; i < s_programCache.size(); ) {
@@ -189,7 +182,16 @@ static void wots2_shader_cache_note_use(GLuint program, int frame) {
     }
     s_programCache.push_back({program, 0, frame, 1});
 }
+
+// Der Name, unter dem ein Shader-Paar im Cache abgelegt wird: der Hash
+// der beiden Quelltexte. Damit bekommen unterschiedliche Shader eigene
+// Eintraege, und derselbe Shader trifft immer denselben Slot.
+static void wots2_shader_cache_tag(const char* vs, const char* fs, char* out, size_t out_size) {
+    uint64_t h = wots2_hash_str(vs ? vs : "") ^ (wots2_hash_str(fs ? fs : "") << 1);
+    snprintf(out, out_size, "p%016llx", (unsigned long long)h);
+}
 '''
+
 
 MARKER = "wots2_shader_cache_init"
 
@@ -197,6 +199,7 @@ MARKER = "wots2_shader_cache_init"
 def patch(path):
     p = pathlib.Path(path)
     t = p.read_text()
+
     if MARKER in t:
         print('  Shader-Cache bereits vorhanden.')
         return
@@ -221,27 +224,22 @@ def patch(path):
     else:
         print('  WARNUNG: init()-Anker nicht gefunden.')
 
-    # 3. Shader-Cache-Store in link() und den direkten Lade-Pfaden.
-    #    Wir patchen die link()-Funktion.
-    link_re = re.compile(
+    # 3. wots2_link_cached VOR link() einfügen.
+    link_anchor = re.search(
         r'(static\s+GLuint\s+link\s*\(\s*const\s+char\s*\*\s*vsSrc\s*,\s*'
         r'const\s+char\s*\*\s*fsSrc\s*\)\s*\{)',
-        re.S)
-    m = link_re.search(t)
-    if m:
-        # Signatur um 'tag'-Parameter erweitern ist invasiv; stattdessen
-        # einen Wrapper: die Hash-basierte Variante.
-        # Fuer die direkten Aufrufe in init() patchen wir die einzelnen
-        # glCreateProgram-Bloecke nicht — zu fragil.
-        # Stattdessen: wots2_link_cached() einfuegen und in init() nutzen.
-        print('  link(): kein automatischer Patch (manuell: siehe wots2_link_cached).')
+        t)
+    if not link_anchor:
+        print('  FEHLER: link()-Funktion nicht gefunden.', file=sys.stderr)
+        sys.exit(1)
 
-    # 4. wots2_link_cached als zusaetzliche Funktion einfuegen.
-    helper2 = r'''
+    cached_fn = r'''
 // Cached-Variante von link(): versucht erst den Binary-Cache, sonst
-// kompiliert sie und legt das Ergebnis ab. Fuer die grossen Programme
-// (3D-Fragment-Shader, der Compose-Shader) lohnt sich das auf Mali-G31.
-static GLuint wots2_link_cached(const char* vsSrc, const char* fsSrc, const char* tag) {
+// kompiliert sie und legt das Ergebnis ab. Der Tag wird aus dem Hash
+// der beiden Quelltexte gebildet.
+static GLuint wots2_link_cached(const char* vsSrc, const char* fsSrc) {
+    char tag[24];
+    wots2_shader_cache_tag(vsSrc, fsSrc, tag, sizeof tag);
     GLuint p = glCreateProgram();
     if (wots2_shader_cache_load(p, tag))
         return p;
@@ -258,27 +256,33 @@ static GLuint wots2_link_cached(const char* vsSrc, const char* fsSrc, const char
     if (!ok) {
         char log[512];
         glGetProgramInfoLog(p, sizeof log, nullptr, log);
-        fprintf(stderr, "[GS] link error (%s): %s\n", tag, log);
+        fprintf(stderr, "[GS] link error: %s\n", log);
     } else {
         wots2_shader_cache_store(p, tag);
     }
     return p;
 }
+
 '''
-    # Einfuegen nach der link()-Funktion.
-    close = re.search(r'\n\}\n', t[m.end():]) if m else None
-    if m and close:
-        insert_at = m.end() + close.end()
-        t = t[:insert_at] + helper2 + t[insert_at:]
-        print('  wots2_link_cached() eingefuegt.')
-    else:
-        print('  WARNUNG: Link-Funktionsende nicht gefunden — Helper am Ende angehaengt.')
-        t = t.rstrip() + "\n" + helper2 + "\n"
+    t = t[:link_anchor.start()] + cached_fn + t[link_anchor.start():]
+
+    # 4. link()-Body durch einen Aufruf von wots2_link_cached ersetzen.
+    body_start = t.find('{', link_anchor.start())
+    depth = 0
+    i = body_start
+    while i < len(t):
+        if t[i] == '{':
+            depth += 1
+        elif t[i] == '}':
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    body_end = i
+    t = t[:body_start] + '{\n    return wots2_link_cached(vsSrc, fsSrc);\n}' + t[body_end+1:]
 
     # 5. Shader-Cache-Tick in end_frame() nach s_frame++.
-    tick_anchor = re.search(
-        r'(\bs_frame\+\+;\s*\n)',
-        t)
+    tick_anchor = re.search(r'(\bs_frame\+\+;\s*\n)', t)
     if tick_anchor:
         t = t[:tick_anchor.end()] + "    wots2_shader_cache_tick(s_frame);\n" + t[tick_anchor.end():]
         print('  end_frame(): shader_cache_tick eingefuegt.')
@@ -286,7 +290,11 @@ static GLuint wots2_link_cached(const char* vsSrc, const char* fsSrc, const char
         print('  WARNUNG: s_frame++-Anker nicht gefunden.')
 
     p.write_text(t)
-    print('  Shader-Cache-Patch fertig.')
+    print('  Shader-Cache-Patch v2 fertig:')
+    print('    - wots2_link_cached() vor link() eingefuegt')
+    print('    - link() ruft jetzt wots2_link_cached() auf')
+    print('    - Cache-Tag aus dem Hash der Shader-Quelltexte')
+    print('    - Shader-Cache-Tick in end_frame()')
 
 
 if __name__ == '__main__':
