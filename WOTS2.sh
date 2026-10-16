@@ -255,6 +255,10 @@ for node in /dev/dri/card0 /dev/dri/renderD128 /dev/fb0; do
 done
 
 # ── MALI-SYMLINKS ────────────────────────────────────────────────────
+# Hinweis: libgbm wird NICHT auf die Mali-Blob gelegt. Die Mali-Blob
+# ruft selbst gbm_bo_get_modifier aus der echten System-libgbm; ein
+# Symlink auf die Blob wuerde dieses Symbol nicht aufloesen und beim
+# ersten GBM-Aufruf "undefined symbol: gbm_bo_get_modifier" werfen.
 log_section "MALI-SYMLINKS"
 SYSTEM_MALI=""
 for candidate in \
@@ -275,12 +279,12 @@ done
 if [ -n "$SYSTEM_MALI" ]; then
     rm -rf /tmp/wots2-mali
     mkdir -p /tmp/wots2-mali
-    for name in libmali.so.0 libmali.so.1 libmali.so libgbm.so.1 libgbm.so.1.0.0 libgbm.so libEGL.so.1 libEGL.so libGLESv2.so.2 libGLESv2.so libGLESv1_CM.so.1 libGLESv1_CM.so; do
+    for name in libmali.so.0 libmali.so.1 libmali.so libEGL.so.1 libEGL.so libGLESv2.so.2 libGLESv2.so libGLESv1_CM.so.1 libGLESv1_CM.so; do
         ln -sf "$SYSTEM_MALI" "/tmp/wots2-mali/$name"
     done
     export LD_LIBRARY_PATH="/tmp/wots2-mali:$GAMEDIR/libs.aarch64:$GAMEDIR:/roms/ports/libs:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}"
     log "Mali-Blob: $SYSTEM_MALI"
-    log "Symlinks in /tmp/wots2-mali/ erstellt."
+    log "Symlinks in /tmp/wots2-mali/ erstellt (ohne libgbm)."
 else
     log "WARNUNG: Kein Mali-Blob gefunden — nutze System-Libraries."
     export LD_LIBRARY_PATH="$GAMEDIR/libs.aarch64:$GAMEDIR:/roms/ports/libs:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}"
@@ -364,7 +368,7 @@ log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
-# ── Bundle-Bibliotheken (NEU) ────────────────────────────────────────
+# ── Bundle-Bibliotheken ──────────────────────────────────────────────
 # Prueft, ob die gepatchte SDL2 tatsaechlich im Bundle liegt. Fehlt
 # sie, laedt die Binary die System-SDL2 — und die hat den KMSDRM-
 # Pageflip-Patch NICHT. Ergebnis auf dem Geraet waere: "Invalid window".
