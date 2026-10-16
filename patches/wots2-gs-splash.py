@@ -1,31 +1,29 @@
 #!/usr/bin/env python3
 """
-patches/wots2-gs-splash.py
+patches/wots2-gs-splash.py (Revision v2)
 
-Zeigt einen Boot-Splash vor dem Spiel: "St0len-One" gross,
-"Way of the Samurai 2 -- RK3326" klein, mit Fortschrittsbalken.
+Zeigt einen Boot-Splash direkt am Ende von hal::gs::init(), ohne
+Aenderungen an gs.h oder main.cpp. Das umgeht die Anker, die in v1
+fehlschlagen konnten.
 
-Aufruf in main.cpp: nach hal::gs::init(), vor mods::load_all().
-Steuerung: WOTS2_SPLASH=N (Sekunden, 0 = aus, Default: 2.5).
-           WOTS2_SPLASH_TITLE / WOTS2_SPLASH_SUBTITLE ueberschreiben.
+Steuerung: WOTS2_SPLASH=N (Sekunden, 0 = aus, Default: 2.5)
+           WOTS2_SPLASH_TITLE / WOTS2_SPLASH_SUBTITLE
 
-Idempotent: Marker 'wots2-gs-splash.py'.
+Idempotent: Marker 'wots2-gs-splash.py v2'.
 
-Zieldatei-Aufruf:
-    python3 patches/wots2-gs-splash.py src/hal/gs.cpp
-
-Passt ausserdem an:
-    include/hal/gs.h   (Deklaration)
-    src/main.cpp       (Aufruf)
+Zieldatei: src/hal/gs.cpp
+Aufruf:    python3 patches/wots2-gs-splash.py src/hal/gs.cpp
 """
 import pathlib
 import re
 import sys
 
 
-MARKER = "wots2-gs-splash.py"
+MARKER = "wots2-gs-splash.py v2"
 
-FONT = """static const u8 kFont5x7[95][5] = {
+FONT = r'''
+// ── Boot-Splash (wots2-gs-splash.py v2) ──────────────────────────────
+static const unsigned char kSplashFont5x7[95][5] = {
 {0x00,0x00,0x00,0x00,0x00},{0x00,0x00,0x5F,0x00,0x00},{0x00,0x07,0x00,0x07,0x00},
 {0x14,0x7F,0x14,0x7F,0x14},{0x24,0x2A,0x7F,0x2A,0x12},{0x23,0x13,0x08,0x64,0x62},
 {0x36,0x49,0x55,0x22,0x50},{0x00,0x05,0x03,0x00,0x00},{0x00,0x1C,0x22,0x41,0x00},
@@ -59,19 +57,17 @@ FONT = """static const u8 kFont5x7[95][5] = {
 {0x44,0x64,0x54,0x4C,0x44},{0x00,0x08,0x36,0x41,0x00},{0x00,0x00,0x7F,0x00,0x00},
 {0x00,0x41,0x36,0x08,0x00},{0x08,0x08,0x2A,0x1C,0x08},
 };
-// """ + MARKER + """
 
 static void wots2_splash_glyph(char c, float x, float y, float scale, u32 rgba) {
-    if (c < 32 || c > 126)
-        return;
-    const u8* g = kFont5x7[(int)c - 32];
+    if (c < 32 || c > 126) return;
+    const unsigned char* g = kSplashFont5x7[(int)c - 32];
     for (int col = 0; col < 5; col++)
         for (int row = 0; row < 7; row++)
             if (g[col] & (1 << row))
                 fill_rect(x + col * scale, y + row * scale, scale, scale, rgba);
 }
 
-static float wots2_splash_text_width(const char* s, float scale) {
+static float wots2_splash_width(const char* s, float scale) {
     return (float)strlen(s) * 6.0f * scale;
 }
 
@@ -81,44 +77,38 @@ static void wots2_splash_text(const char* s, float x, float y, float scale, u32 
 }
 
 static void wots2_splash_text_centered(const char* s, float cx, float y, float scale, u32 rgba) {
-    wots2_splash_text(s, cx - wots2_splash_text_width(s, scale) * 0.5f, y, scale, rgba);
+    wots2_splash_text(s, cx - wots2_splash_width(s, scale) * 0.5f, y, scale, rgba);
 }
 
-void show_splash(const char* title, const char* subtitle, float seconds) {
-    if (seconds <= 0.0f || s_window == nullptr)
-        return;
-    SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK);
+static void wots2_show_splash(const char* title, const char* subtitle, float seconds) {
+    if (seconds <= 0.0f || s_window == nullptr) return;
     const u32 bg      = 0x80000000u;
     const u32 fgTitle = 0x80FFFFFFu;
     const u32 fgSub   = 0x8090A0B0u;
     const u32 accent  = 0x8060A0FFu;
-    const float titleScale = 6.0f;
-    const float subScale   = 2.0f;
     const double start = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
     for (;;) {
         bool skip = false;
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
-            if (ev.type == SDL_QUIT)
-                exit(0);
+            if (ev.type == SDL_QUIT) exit(0);
             if (ev.type == SDL_KEYDOWN || ev.type == SDL_JOYBUTTONDOWN ||
                 ev.type == SDL_MOUSEBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONDOWN)
                 skip = true;
         }
         const double now = (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency();
         const double elapsed = now - start;
-        if (skip || elapsed >= (double)seconds)
-            break;
+        if (skip || elapsed >= (double)seconds) break;
         const float progress = (float)(elapsed / (double)seconds);
         begin_frame();
         clear(bg);
         fill_rect(0.0f, 0.0f, (float)s_width, 3.0f, accent);
         wots2_splash_text_centered(title, (float)s_width * 0.5f,
-                                   (float)s_height * 0.35f, titleScale, fgTitle);
+                                   (float)s_height * 0.35f, 6.0f, fgTitle);
         fill_rect((float)s_width * 0.15f, (float)s_height * 0.60f,
                   (float)s_width * 0.70f, 1.0f, accent);
         wots2_splash_text_centered(subtitle, (float)s_width * 0.5f,
-                                   (float)s_height * 0.65f, subScale, fgSub);
+                                   (float)s_height * 0.65f, 2.0f, fgSub);
         const float barW = (float)s_width * 0.6f;
         const float barX = ((float)s_width - barW) * 0.5f;
         const float barY = (float)s_height - 40.0f;
@@ -130,88 +120,63 @@ void show_splash(const char* title, const char* subtitle, float seconds) {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {}
 }
-"""
+// ''' + MARKER
 
 
-def patch_gs_cpp(path):
+def patch(path):
     p = pathlib.Path(path)
     t = p.read_text()
     if MARKER in t:
-        print('  gs.cpp: Splash bereits vorhanden.')
+        print('  Splash v2 bereits vorhanden.')
         return
-    anchor = t.find('void shutdown() {')
-    if anchor < 0:
-        print('  FEHLER: shutdown()-Anker in gs.cpp nicht gefunden.',
-              file=sys.stderr)
+
+    # 1. Forward-Deklaration direkt nach "namespace hal::gs {".
+    ns = t.find('namespace hal::gs {')
+    if ns < 0:
+        print('  FEHLER: namespace hal::gs nicht gefunden.', file=sys.stderr)
         sys.exit(1)
-    t = t[:anchor] + FONT + '\n' + t[anchor:]
-    p.write_text(t)
-    print('  gs.cpp: Splash-Code eingefuegt.')
+    fwd = ('\nstatic void wots2_show_splash(const char* title, '
+           'const char* subtitle, float seconds);\n')
+    t = t[:ns + len('namespace hal::gs {')] + fwd + t[ns + len('namespace hal::gs {'):]
 
-
-def patch_gs_h(path):
-    p = pathlib.Path(path)
-    t = p.read_text()
-    if 'show_splash' in t:
-        print('  gs.h: Deklaration bereits vorhanden.')
-        return
-    m = re.search(r'(\n\s*void\s+shutdown\s*\(\s*\)\s*;)', t)
-    if not m:
-        print('  FEHLER: shutdown()-Deklaration in gs.h nicht gefunden.',
-              file=sys.stderr)
+    # 2. Splash-Code vor dem Namespace-Ende einfuegen.
+    end_marker = '}  // namespace hal::gs'
+    idx = t.rfind(end_marker)
+    if idx < 0:
+        print('  FEHLER: namespace-Ende nicht gefunden.', file=sys.stderr)
         sys.exit(1)
-    decl = '\n\n    // Boot-Splash (patches/wots2-gs-splash.py).\n    void show_splash(const char* title, const char* subtitle, float seconds);\n'
-    t = t[:m.start(1)] + decl + t[m.start(1):]
-    p.write_text(t)
-    print('  gs.h: show_splash deklariert.')
+    t = t[:idx] + FONT + '\n' + t[idx:]
 
-
-def patch_main_cpp(path):
-    p = pathlib.Path(path)
-    t = p.read_text()
-    if 'show_splash' in t:
-        print('  main.cpp: Aufruf bereits vorhanden.')
-        return
-    m = re.search(r'(\n\s*mods::load_all\(\);)', t)
+    # 3. Aufruf am Ende von init() nach dem printf.
+    m = re.search(r'(printf\("\[GS\] init %dx%d\\n", width, height\);)', t)
     if not m:
-        print('  FEHLER: mods::load_all()-Anker in main.cpp nicht gefunden.',
-              file=sys.stderr)
+        print('  FEHLER: init()-printf nicht gefunden.', file=sys.stderr)
         sys.exit(1)
     call = (
-        '\n'
-        '    // Boot-Splash (patches/wots2-gs-splash.py). Vor mods::load_all.\n'
+        '\n\n    // Splash (wots2-gs-splash.py v2) — direkt nach GL-Init.\n'
         '    {\n'
         '        float splash_secs = 2.5f;\n'
         '        if (const char* s = getenv("WOTS2_SPLASH"))\n'
         '            splash_secs = (float)atof(s);\n'
-        '        const char* title = getenv("WOTS2_SPLASH_TITLE");\n'
-        '        const char* subtitle = getenv("WOTS2_SPLASH_SUBTITLE");\n'
-        '        if (title == nullptr)    title = "St0len-One";\n'
-        '        if (subtitle == nullptr) subtitle = "Way of the Samurai 2  --  RK3326";\n'
+        '        const char* stitle = getenv("WOTS2_SPLASH_TITLE");\n'
+        '        const char* ssub   = getenv("WOTS2_SPLASH_SUBTITLE");\n'
+        '        if (stitle == nullptr) stitle = "St0len-One";\n'
+        '        if (ssub   == nullptr) ssub   = "Way of the Samurai 2  --  RK3326";\n'
         '        if (splash_secs > 0.0f)\n'
-        '            hal::gs::show_splash(title, subtitle, splash_secs);\n'
+        '            wots2_show_splash(stitle, ssub, splash_secs);\n'
         '    }\n'
     )
-    t = t[:m.start(1)] + call + t[m.start(1):]
+    t = t[:m.end(1)] + call + t[m.end(1):]
+
     p.write_text(t)
-    print('  main.cpp: Splash-Aufruf eingefuegt.')
-
-
-def main():
-    if len(sys.argv) < 2:
-        print("Verwendung: python3 wots2-gs-splash.py src/hal/gs.cpp")
-        sys.exit(1)
-    gs_cpp = sys.argv[1]
-    # Die anderen Pfade aus dem gs.cpp-Pfad ableiten.
-    repo = pathlib.Path(gs_cpp).resolve().parents[2]
-    gs_h = repo / 'include' / 'hal' / 'gs.h'
-    main_cpp = repo / 'src' / 'main.cpp'
-    print('== WOTS2 Splash-Patch ==')
-    patch_gs_cpp(gs_cpp)
-    patch_gs_h(str(gs_h))
-    patch_main_cpp(str(main_cpp))
-    print('== Fertig ==')
+    print('  Splash v2 eingefuegt:')
+    print('    - Forward-Deklaration nach namespace-Klammer')
+    print('    - Splash-Code vor Namespace-Ende')
+    print('    - Aufruf nach init()-printf')
 
 
 if __name__ == '__main__':
-    main()
+    target = sys.argv[1] if len(sys.argv) > 1 else 'src/hal/gs.cpp'
+    print('Patche %s' % target)
+    patch(target)
+    print('Fertig.')
