@@ -142,31 +142,42 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-invalidate.py nicht gefunden)"
 
+          # ── Shader-Cache v2 (link() ersetzt) ────────────────────────
+          S=$(find_script wots2-gs-shader-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-shader-cache.py nicht gefunden)"
+
+          # ── 2D-Batching v3 ──────────────────────────────────────────
+          S=$(find_script wots2-gs-batch-2d.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-batch-2d.py nicht gefunden)"
+
+          # ── Splash (v2, nur gs.cpp) ─────────────────────────────────
+          S=$(find_script wots2-gs-splash.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-splash.py nicht gefunden)"
+
           # ── Diagnose init() + ES 3.2 ────────────────────────────────
           S=$(find_script wots2-gs-init-diag.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-init-diag.py nicht gefunden)"
 
+          # ── Punktlichter von 16 auf 8 ───────────────────────────────
+          S=$(find_script wots2-gs-combat.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-combat.py nicht gefunden)"
+
+          # ── Perf-Trace (nur mit WOTS2_PERF_TRACE=1 aktiv) ───────────
+          S=$(find_script wots2-gs-perf-trace.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-perf-trace.py nicht gefunden)"
+
           # ════════════════════════════════════════════════════════════
-          # AUS: diese sechs Patches haben das schwarze/weisse Bild
-          # verursacht oder sind nicht getestet. Wird EINZELN wieder
-          # aktiviert, sobald die Performance-Basis sauber laeuft.
-          #
-          # AUS (bestätigt kaputt): wots2-persistent-buffers.py
-          #   → glMapBufferRange auf Mali-G31 liefert undefinierte
-          #     Vertex-Daten. Das war die Ursache des schwarzen Bildes.
-          # AUS (nicht getestet): wots2-gs-shader-cache.py
-          # AUS (nicht getestet): wots2-gs-batch-2d.py
-          # AUS (nicht getestet): wots2-gs-combat.py
-          # AUS (nicht getestet): wots2-gs-splash.py
-          # AUS (nicht getestet): wots2-gs-perf-trace.py
+          # AUS (bestaetigt kaputt): wots2-persistent-buffers.py
+          #   glMapBufferRange auf Mali-G31 liefert undefinierte
+          #   Vertex-Daten. Ursache des schwarzen/weissen Bildes.
           # ════════════════════════════════════════════════════════════
-          echo "  (wots2-persistent-buffers.py  — AUS, Ursache des schwarzen Bildes)"
-          echo "  (wots2-gs-shader-cache.py     — AUS)"
-          echo "  (wots2-gs-batch-2d.py         — AUS)"
-          echo "  (wots2-gs-combat.py           — AUS)"
-          echo "  (wots2-gs-splash.py           — AUS)"
-          echo "  (wots2-gs-perf-trace.py       — AUS)"
+          echo "  (wots2-persistent-buffers.py — AUS, Ursache des schwarzen Bildes)"
 
           # ── Kollision ───────────────────────────────────────────────
           S=$(find_script wots2-collision-neon.py)
