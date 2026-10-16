@@ -13,8 +13,8 @@
 #   WOTS2_FX_SCALE=N               Effekt-Anzahl (Default: 0.4)
 #   WOTS2_NO_CULL=0/1              Frustum-Culling aus (Default: 0)
 #   WOTS2_NO_BATCH=0/1             2D-Batching aus (Default: 0)
-#   WOTS2_PERSISTENT_BUFFERS=0/1   AUS LASSEN (Default: 0)
-#   WOTS2_PAD_DIAG=0/1             Stick-Diagnose (Default: 0)
+#   WOTS2_PERSISTENT_BUFFERS=0/1   NIEMALS auf 1 setzen (Default: 0)
+#   WOTS2_PAD_DIAG=0/1             Stick-Diagnose ins stderr (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
 #   WOTS2_SHADER_LRU=N             Frames bis Shader-Unload (Default: 120)
 #   WOTS2_SPLASH=N                 Splash-Dauer in Sekunden (Default: 2.5)
@@ -378,6 +378,7 @@ export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
 # undefinierte Vertex-Daten und macht das Bild schwarz/weiss.
 export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-0}"
 
+# Stick-Diagnose: nur zum Debuggen, wenn der rechte Stick nicht reagiert.
 export WOTS2_PAD_DIAG="${WOTS2_PAD_DIAG:-0}"
 
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
@@ -419,6 +420,13 @@ log ""
 log "Bundle-Bibliotheken (libs.aarch64):"
 if [ -d "$GAMEDIR/libs.aarch64" ]; then
     ls -la "$GAMEDIR/libs.aarch64" 2>&1 | log_pipe
+    if [ -e "$GAMEDIR/libs.aarch64/libSDL2-2.0.so.0" ]; then
+        log "  OK: libSDL2-2.0.so.0 im Bundle — System-SDL2 wird umgangen."
+    else
+        log "  WARNUNG: libSDL2-2.0.so.0 fehlt in libs.aarch64!"
+    fi
+else
+    log "  (libs.aarch64 fehlt komplett)"
 fi
 
 log ""
@@ -450,16 +458,36 @@ if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
     PROBE_OK=0
     if command -v timeout >/dev/null 2>&1; then
         ( LD_DEBUG=libs timeout 5 ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" || PROBE_OK=1
+    else
+        ( LD_DEBUG=libs ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" &
+        DIAG_PID=$!
+        ( sleep 5 && kill -TERM "$DIAG_PID" 2>/dev/null ) &
+        KILLER_PID=$!
+        wait "$DIAG_PID" 2>/dev/null || PROBE_OK=1
+        kill -TERM "$KILLER_PID" 2>/dev/null || true
+        wait "$KILLER_PID" 2>/dev/null || true
     fi
     if [ -s "$LIBDIAG_LOG" ]; then
         head -200 "$LIBDIAG_LOG" > "$LIBDIAG_LOG.head"
         mv -f "$LIBDIAG_LOG.head" "$LIBDIAG_LOG"
-        log "  $LIBDIAG_LOG geschrieben ($(wc -l < "$LIBDIAG_LOG") Zeilen)"
+        LINES=$(wc -l < "$LIBDIAG_LOG")
+        log "  $LIBDIAG_LOG geschrieben ($LINES Zeilen)"
+        log "  Erste 20 Zeilen:"
+        head -20 "$LIBDIAG_LOG" | log_pipe
+    else
+        log "  WARNUNG: LD_DEBUG hat nichts geschrieben."
     fi
+    if [ "$PROBE_OK" = "1" ]; then
+        log "  Hinweis: Der Probe-Lauf endete nicht regulaer —"
+        log "  das Spiel ist entweder abgestuerzt oder braucht mehr als 5 Sekunden."
+    fi
+else
+    log ""
+    log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG (Probe uebersprungen)."
 fi
 
 # ══════════════════════════════════════════════════════════════════════
-# HELFER
+# HELFER: Entpacker wählen
 # ══════════════════════════════════════════════════════════════════════
 pick_extractor() {
     if command -v bsdtar >/dev/null 2>&1; then echo "bsdtar"
@@ -481,6 +509,7 @@ unpack_image() {
     local tmp="$GAMEDIR/.extract-tmp"
     rm -rf "$tmp"
     mkdir -p "$tmp"
+    log "Entpacke $img nach $tmp ..."
     case "$extractor" in
         bsdtar) bsdtar -xf "$img" -C "$tmp" 2>>"$LOG" || return 1 ;;
         7z|7za) 7z x -y -o"$tmp" "$img" >>"$LOG" 2>&1 || return 1 ;;
@@ -490,6 +519,7 @@ unpack_image() {
     local subdir
     subdir="$(find "$tmp" -maxdepth 2 -type d \( -name 'PS2' -o -name 'SLUS*' \) 2>/dev/null | head -n 1)"
     if [ -n "$subdir" ] && [ -d "$subdir" ]; then
+        log "Verschiebe Inhalt aus $subdir"
         cp -a "$subdir"/. "$EXTRACTED"/ 2>>"$LOG" || true
     else
         cp -a "$tmp"/. "$EXTRACTED"/ 2>>"$LOG" || true
@@ -499,7 +529,7 @@ unpack_image() {
 }
 
 # ══════════════════════════════════════════════════════════════════════
-# ENTPACKEN
+# ENTPACKEN — CHD zuerst, dann ISO, dann Archive
 # ══════════════════════════════════════════════════════════════════════
 log_section "SPIELDATEN ENTPACKEN"
 
@@ -507,11 +537,13 @@ if [ -f "$EXTRACTED/SLUS_208.93" ] || [ -f "$EXTRACTED/slus_208.93" ]; then
     log "extracted/ enthaelt bereits SLUS_208.93 — ueberspringe Entpacken."
 else
     NEEDS_UNPACK=1
+
     CHD_FILE=""
     for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
                 "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
         [ -f "$cand" ] && { CHD_FILE="$cand"; break; }
     done
+
     if [ -n "$CHD_FILE" ]; then
         log "CHD gefunden: $CHD_FILE"
         if [ ! -x "$CHDMAN" ]; then
@@ -524,25 +556,35 @@ else
         mkdir -p "$TMP_CHD"
         BASE="$(basename "$CHD_FILE")"
         BASE="${BASE%.chd}"; BASE="${BASE%.CHD}"
+        log "Extrahiere CHD nach ISO ..."
         CHD_ISO=""
         if "$CHDMAN" extractdvd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.iso" >>"$LOG" 2>&1 \
            && [ -f "$TMP_CHD/$BASE.iso" ]; then
             CHD_ISO="$TMP_CHD/$BASE.iso"
+            log "extractdvd erfolgreich."
         elif "$CHDMAN" extractcd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.cue" \
                                  -ob "$TMP_CHD/$BASE.bin" >>"$LOG" 2>&1 \
              && [ -f "$TMP_CHD/$BASE.bin" ]; then
             CHD_ISO="$TMP_CHD/$BASE.bin"
+            log "extractcd erfolgreich (CUE/BIN)."
         else
+            log "FEHLER: chdman konnte die CHD nicht extrahieren."
             echo "FEHLER: CHD-Extraktion fehlgeschlagen. Log: $LOG" >&2
-            rm -rf "$TMP_CHD"; exit 1
+            rm -rf "$TMP_CHD"
+            exit 1
         fi
+        log "Entpacke die entstandene ISO/BIN ..."
         if ! unpack_image "$CHD_ISO"; then
+            log "FEHLER: ISO-Entpacken fehlgeschlagen."
             echo "FEHLER: ISO-Entpacken fehlgeschlagen. Log: $LOG" >&2
-            rm -rf "$TMP_CHD"; exit 1
+            rm -rf "$TMP_CHD"
+            exit 1
         fi
         rm -rf "$TMP_CHD"
+        log "CHD-Verarbeitung abgeschlossen."
         NEEDS_UNPACK=0
     fi
+
     if [ "$NEEDS_UNPACK" = "1" ]; then
         IMG=""
         for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
@@ -551,16 +593,25 @@ else
             [ -f "$cand" ] && { IMG="$cand"; break; }
         done
         if [ -z "$IMG" ]; then
+            log "FEHLER: Kein Disc-Image und keine CHD gefunden."
             echo "FEHLER: Bitte 'wots2.chd' oder 'wots2.iso' in $GAMEDIR ablegen." >&2
             exit 1
         fi
+        log "Disc-Image: $IMG"
         if ! unpack_image "$IMG"; then
+            log "FEHLER: Entpacken fehlgeschlagen."
             echo "FEHLER: Entpacken fehlgeschlagen. Log: $LOG" >&2
             exit 1
         fi
     fi
+
+    log "Inhalt von extracted/:"
+    ls -la "$EXTRACTED" | head -20 | log_pipe
+
     if [ ! -f "$EXTRACTED/SLUS_208.93" ] && [ ! -f "$EXTRACTED/slus_208.93" ]; then
+        log "FEHLER: SLUS_208.93 fehlt in extracted/."
         echo "FEHLER: SLUS_208.93 fehlt. Log: $LOG" >&2
+        find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | log_pipe
         exit 1
     fi
     log "SLUS_208.93 vorhanden — Entpacken OK."
@@ -661,6 +712,8 @@ if [ -s "$WOTS2_STDOUT" ]; then
     log ""
     log "Auszug aus wots2-stdout.txt (letzte 40 Zeilen):"
     tail -40 "$WOTS2_STDOUT" | log_pipe
+else
+    log "wots2-stdout.txt ist leer."
 fi
 
 if [ -s "$WOTS2_STDERR" ]; then
@@ -674,7 +727,9 @@ if [ -s "$WOTS2_STDERR" ]; then
     grep -q "no OpenGL 3.3" "$WOTS2_STDERR" && log "  - Kein OpenGL-3.x-Kontext"
     grep -q "not found" "$WOTS2_STDERR" && log "  - Eine Bibliothek wurde nicht gefunden"
     grep -q "Segmentation fault" "$WOTS2_STDERR" && log "  - Segmentation Fault"
-    grep -c "" "$WOTS2_STDERR" 2>/dev/null | { read -r n; log "  (stderr hat $n Zeilen)"; }
+    grep -c "" "$WOTS2_STDERR" 2>/dev/null | { read -r n; log "  (stderr hat $n Zeilen insgesamt)"; }
+else
+    log "wots2-stderr.txt ist leer."
 fi
 
 log_section "ENDE"
