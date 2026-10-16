@@ -4,27 +4,14 @@
 # RK3326-Port: St0len-One
 # Target:      Rockchip RK3326 / Cortex-A35 / Mali-G31 MP2
 #
-# Erststart: sucht wots2.chd, wots2.iso oder ein anderes Disc-Image und
-#            legt die Spieldateien nach wots2/extracted/.
-#
-# CHD-Support: chdman (ARM64) liegt neben der wots2-Binary und wird zum
-#              Extrahieren von .chd-Dateien genutzt. Die entstandene ISO
-#              wird im selben Lauf entpackt; die ISO bleibt nicht liegen.
-#
 # Killswitch:
-#   gptokeyb wird mit SDL_GAMECONTROLLERCONFIG_FILE gestartet. Der
-#   Standard-Hotkey (Select+Start) beendet wots2 sauber. Wenn wots2
-#   auf SIGTERM nicht reagiert, eskaliert der Launcher nach 3 Sekunden
-#   auf SIGKILL. Der Launcher sucht gptokeyb in PATH sowie in den auf
-#   ArkOS4Clone ueblichen Pfaden.
+#   gptokeyb wird mit "-k wots2" gestartet. Der Standard-Hotkey
+#   (Select+Start) beendet wots2 sauber. Wenn wots2 auf SIGTERM
+#   nicht reagiert, eskaliert der Launcher nach 3 Sekunden auf SIGKILL.
 #
-# AUDIO-HINWEIS (Stand jetzt):
-#   Unser SDL2-Bundle wurde ohne ALSA gebaut (FindALSA hat bei
-#   Cross-Compiles libasound nicht gefunden). Der Port laeuft daher
-#   stumm, bis scripts/ci-build-sdl2.sh um -DALSA_LIBRARY=...
-#   -DALSA_INCLUDE_DIR=... erweitert und neu gebaut wurde.
-#   Der Launcher erzwingt SDL_AUDIODRIVER nicht, damit SDL sich
-#   selbst einen verfuegbaren Treiber sucht statt abzustuerzen.
+# AUDIO-HINWEIS:
+#   Unser SDL2-Bundle wird mit ALSA-Support gebaut. SDL waehlt den
+#   Audio-Treiber selbst, sobald er verfuegbar ist.
 #
 # Steuerung:
 #   WOTS2_LIBDIAG=0/1       LD_DEBUG-Probe (Default: 1)
@@ -299,10 +286,6 @@ for node in /dev/dri/card0 /dev/dri/renderD128 /dev/fb0; do
 done
 
 # ── MALI-SYMLINKS ────────────────────────────────────────────────────
-# libgbm wird NICHT auf die Mali-Blob gelegt. Die Mali-Blob ruft selbst
-# gbm_bo_get_modifier aus der echten System-libgbm; ein Symlink auf die
-# Blob wuerde dieses Symbol nicht aufloesen und beim ersten GBM-Aufruf
-# "undefined symbol: gbm_bo_get_modifier" werfen.
 log_section "MALI-SYMLINKS"
 SYSTEM_MALI=""
 for candidate in \
@@ -353,10 +336,6 @@ fi
 
 # ── SDL-UMGEBUNG ─────────────────────────────────────────────────────
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"
-# AUDIODRIVER NICHT erzwingen: unser SDL2-Bundle hat kein ALSA drin
-# (FindALSA findet die Lib bei Cross-Compiles nicht); SDL waehlt dann
-# selbst den naechsten verfuegbaren Treiber oder laeuft stumm statt
-# abzustuerzen.
 unset SDL_AUDIODRIVER
 unset AUDIODEV
 
@@ -386,8 +365,6 @@ export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.6}"
 
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
 
-# Frustum-Culling laeuft mit korrigierter NEON-Version (wots2-neon.py v3).
-# Notausgang bei Bedarf: WOTS2_NO_CULL=1 in der Umgebung setzen.
 export WOTS2_NO_CULL="${WOTS2_NO_CULL:-0}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
@@ -424,7 +401,6 @@ if [ -d "$GAMEDIR/libs.aarch64" ]; then
         log "  OK: libSDL2-2.0.so.0 im Bundle — System-SDL2 wird umgangen."
     else
         log "  WARNUNG: libSDL2-2.0.so.0 fehlt in libs.aarch64!"
-        log "  Es wird die System-SDL2 geladen; der KMSDRM-Pageflip-Patch greift dann NICHT."
     fi
 else
     log "  (libs.aarch64 fehlt komplett)"
@@ -682,8 +658,9 @@ on_signal() {
     kill_wots2_escalate
 }
 
+# gptokeyb mit -k <application name> starten, damit Select+Start wots2 beendet.
 if find_gptokeyb; then
-    "$GPTOKEYB_PATH" "./wots2" >/dev/null 2>&1 &
+    "$GPTOKEYB_PATH" "./wots2" -k "wots2" >/dev/null 2>&1 &
     GPTOKEYB_PID=$!
     log "gptokeyb gestartet (PID $GPTOKEYB_PID) — Kill-Hotkey Select+Start."
 else
