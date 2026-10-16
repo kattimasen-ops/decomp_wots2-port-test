@@ -18,15 +18,20 @@ import sys
 import pathlib
 
 
+# WICHTIG: '\n' (echter Zeilenumbruch), nicht '\\n' (Backslash + n).
+# Die Precision-Zeilen landen in einem C++-Raw-String-Literal R"(...)".
+# In einem Raw-String ist '\n' NICHT ein Escape — ein '\\n' im Python-
+# Quelltext wird zu zwei Zeichen im Shader und der Mali-Compiler wirft
+# dann P0007 "Unexpected text found after #version directive".
 PRECISION = (
-    '#version 320 es\\n'
-    'precision highp float;\\n'
-    'precision highp int;\\n'
-    'precision highp sampler2D;\\n'
-    'precision highp sampler2DShadow;\\n'
-    'precision highp sampler2DArrayShadow;\\n'
-    'precision highp sampler3D;\\n'
-    'precision highp samplerCube;\\n'
+    '#version 320 es\n'
+    'precision highp float;\n'
+    'precision highp int;\n'
+    'precision highp sampler2D;\n'
+    'precision highp sampler2DShadow;\n'
+    'precision highp sampler2DArrayShadow;\n'
+    'precision highp sampler3D;\n'
+    'precision highp samplerCube;\n'
 )
 
 DRAW_BUFFER_HELPER = r'''
