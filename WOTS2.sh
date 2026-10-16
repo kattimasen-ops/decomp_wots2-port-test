@@ -1,11 +1,14 @@
 #!/bin/bash
 # WOTS2.sh — Way of the Samurai 2 für M9 Pro / RK3326 / ArkOS4Clone
 #
-# Erststart: sucht wots2.iso (oder .zip/.7z/.rar/.tar.*) und entpackt
-#            sie nach wots2/extracted/. Danach startet der Launcher
+# Erststart: sucht wots2.iso, wots2.chd oder ein anderes Disc-Image und
+#            entpackt es nach wots2/extracted/. Danach startet der Launcher
 #            direkt die Binary.
 #
-# Benötigt: bsdtar (libarchive-tools) ODER 7z (p7zip-full).
+# CHD-Support: chdman (ARM64) liegt neben der wots2-Binary und wird
+#              zum Extrahieren von .chd-Dateien genutzt.
+#
+# Benötigt: bsdtar (libarchive-tools) ODER 7z (p7zip-full) für Archive.
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
@@ -18,6 +21,7 @@ cd "$GAMEDIR" || exit 1
 
 EXTRACTED="$GAMEDIR/extracted"
 DATA_ROOT="$GAMEDIR"
+CHDMAN="$GAMEDIR/chdman"
 
 # ── LOGGING ──────────────────────────────────────────────────────────
 LOG="$GAMEDIR/log.txt"
@@ -255,31 +259,21 @@ export MALLOC_TRIM_THRESHOLD_=131072
 export MALLOC_MMAP_THRESHOLD_=131072
 
 # ── Mali-G31 DDK / AFBC / Shader-Cache ───────────────────────────────
-# AFBC (Arm Frame Buffer Compression) ist auf der G31 integriert. Ein
-# explizites Setzen hilft, wenn EGLConfig ohne die richtigen Attribute
-# gewählt wurde. MAX_ASYNC_BUFFER_COUNT=2 begrenzt den Async-Pool.
 export MALI_AFBC=1
 export MALI_MAX_ASYNC_BUFFER_COUNT=2
 export MALI_BUFFER_PREALLOC=1
 
 # Shader-Programm-Cache (Halo-Effekt: ~50 MB nach mehreren Levels).
-# Cache liegt in $GAMEDIR/shader_cache/. Treiber-Key (GL_VERSION+
-# GL_RENDERER) invalidiert den Cache nach einem Mali-Update automatisch.
-# LRU=N: Programme, die seit N Frames nicht gebunden wurden, werden via
-# glDeleteProgram freigegeben. 0 = aus.
 export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-600}"
 
 # 2D-Draw-Call-Batching (ARM: <500 Draw Calls pro Frame auf Mali).
-# Bei falscher Darstellung: WOTS2_NO_BATCH=1.
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
 
 # SDL2-Audio: groesserer Puffer, weniger Callback-Overhead.
-# WOTS2 ist Singleplayer — Latenz spielt keine Rolle, CPU-Last schon.
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 
 # Optional: KMSDRM Double-Buffer (niedrigere Latenz, mehr CPU-Last).
-# WOTS2 hat 30-FPS-Logik; einschalten nur bei Input-Lag-Gefuehl.
 # export SDL_KMSDRM_DOUBLE_BUFFER=1
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
@@ -290,7 +284,64 @@ if [ ! -x ./wots2 ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════
-# ISO-ENTPACKEN (Erststart)
+# CHD-EXTRAKTION (falls eine .chd vorliegt)
+# ══════════════════════════════════════════════════════════════════════
+log_section "CHD-EXTRAKTION"
+
+CHD_FILE=""
+for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
+            "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
+    [ -f "$cand" ] && { CHD_FILE="$cand"; break; }
+done
+
+if [ -n "$CHD_FILE" ] && [ ! -d "$EXTRACTED" -o -z "$(ls -A "$EXTRACTED" 2>/dev/null)" ]; then
+    log "CHD-Datei gefunden: $CHD_FILE"
+
+    if [ ! -x "$CHDMAN" ]; then
+        log "FEHLER: chdman nicht gefunden unter $CHDMAN."
+        echo "FEHLER: chdman fehlt. Bitte den Port neu herunterladen." >&2
+        exit 1
+    fi
+
+    CHD_BASE="$(basename "$CHD_FILE" .chd)"
+    CHD_BASE="${CHD_BASE%.CHD}"
+    TMP_CHD="$GAMEDIR/.chd-extract"
+    rm -rf "$TMP_CHD"
+    mkdir -p "$TMP_CHD"
+
+    log "Extrahiere CHD nach ISO ..."
+    # extractdvd fuer DVD-basierte Discs (PS2), extractcd als Fallback.
+    if "$CHDMAN" extractdvd -i "$CHD_FILE" -o "$TMP_CHD/$CHD_BASE.iso" >>"$LOG" 2>&1; then
+        log "extractdvd erfolgreich."
+    elif "$CHDMAN" extractcd -i "$CHD_FILE" -o "$TMP_CHD/$CHD_BASE.cue" \
+                             -ob "$TMP_CHD/$CHD_BASE.bin" >>"$LOG" 2>&1; then
+        log "extractcd erfolgreich (CUE/BIN)."
+    else
+        log "FEHLER: chdman konnte die CHD nicht extrahieren."
+        echo "FEHLER: CHD-Extraktion fehlgeschlagen. Log: $LOG" >&2
+        rm -rf "$TMP_CHD"
+        exit 1
+    fi
+
+    # Gefundene ISO oder CUE/BIN nach extracted/ verschieben.
+    mkdir -p "$EXTRACTED"
+    for f in "$TMP_CHD"/*; do
+        [ -f "$f" ] && cp -a "$f" "$EXTRACTED/" 2>>"$LOG" || true
+    done
+    rm -rf "$TMP_CHD"
+
+    log "CHD-Extraktion abgeschlossen. Inhalt von extracted/:"
+    ls -la "$EXTRACTED" | head -20 | while IFS= read -r line; do log "  $line"; done
+else
+    if [ -n "$CHD_FILE" ]; then
+        log "CHD gefunden, aber extracted/ bereits befuellt — ueberspringe."
+    else
+        log "Keine CHD-Datei gefunden."
+    fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════
+# ISO/ARCHIV-ENTPACKEN (Erststart)
 # ══════════════════════════════════════════════════════════════════════
 log_section "ISO-ENTPACKEN"
 
@@ -306,7 +357,7 @@ else
 
     if [ -z "$IMG" ]; then
         log "FEHLER: Kein Disc-Image gefunden."
-        echo "FEHLER: Bitte 'wots2.iso' (SLUS-208.93) in $GAMEDIR ablegen." >&2
+        echo "FEHLER: Bitte 'wots2.iso', 'wots2.chd' oder ein Archiv (SLUS-208.93) in $GAMEDIR ablegen." >&2
         exit 1
     fi
     log "Disc-Image: $IMG"
