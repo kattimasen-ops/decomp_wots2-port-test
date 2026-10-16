@@ -5,14 +5,13 @@ from EmulationStation's controller configuration (port/knulli/README.md).
 SDL2's built-in database takes the H700 handhelds' controls (all of them
 report the same generic GUID) for an ODROID-GO 2 pad, with the wrong
 buttons. EmulationStation knows each device's controls by name; this turns
-the entry of every connected device into an SDL mapping, as Batocera's
+the entry of every connected device into a SDL mapping, as Batocera's
 emulator launcher does.
 
-Revision ohne Tausch: Die ES-Namen werden 1:1 auf die SDL-Namen abgebildet.
+Revision ohne Tausch: die ES-Namen werden 1:1 auf die SDL-Namen abgebildet.
 Das ist richtig, wenn die es_input.cfg des Geraets die Buttons bereits im
-Xbox-Layout meldet. Wenn sie im Nintendo-Layout meldet (EmulationStation-
-Standard), muessen a<->b und x<->y getauscht werden — dann bitte
-NAMES_RK3326_SWAP unten verwenden.
+Xbox-Layout meldet (a unten, b rechts). Wenn sie Nintendo-Layout meldet
+(a rechts, b unten), muessen a<->b und x<->y getauscht werden.
 """
 
 import re
@@ -23,22 +22,8 @@ CONFIGS = [
     "/usr/share/emulationstation/es_input.cfg",
 ]
 
-# Standard: 1:1, kein Tausch.
 NAMES = {
     "a": "a", "b": "b", "x": "x", "y": "y",
-    "select": "back", "start": "start", "hotkey": "guide",
-    "pageup": "leftshoulder", "pagedown": "rightshoulder",
-    "l2": "lefttrigger", "r2": "righttrigger",
-    "l3": "leftstick", "r3": "rightstick",
-    "up": "dpup", "down": "dpdown", "left": "dpleft", "right": "dpright",
-    "joystick1left": "leftx", "joystick1up": "lefty",
-    "joystick2left": "rightx", "joystick2up": "righty",
-}
-
-# Falls die es_input.cfg Nintendo-Layout verwendet: diese Map verwenden.
-# In der main() unten `NAMES` durch `NAMES_RK3326_SWAP` ersetzen.
-NAMES_RK3326_SWAP = {
-    "b": "a", "a": "b", "y": "x", "x": "y",
     "select": "back", "start": "start", "hotkey": "guide",
     "pageup": "leftshoulder", "pagedown": "rightshoulder",
     "l2": "lefttrigger", "r2": "righttrigger",
@@ -62,12 +47,7 @@ def connected_names():
     return names
 
 
-# the sticks' axes, named in EmulationStation by the direction that gives
-# the value it notes (left and up are negative in SDL)
 STICKS = {"leftx", "lefty", "rightx", "righty"}
-# the triggers' axes: their whole travel (SDL reads an axis end to end, and a
-# trigger rests at the low end), the other way round when pressing one lowers
-# it
 TRIGGERS = {"lefttrigger", "righttrigger"}
 
 
@@ -83,11 +63,9 @@ def element(entry, sdl_name):
         except (TypeError, ValueError):
             return None
         if sdl_name in STICKS:
-            # a stick whose left or up is positive is the other way round
             return f"a{identifier}" if negative else f"a{identifier}~"
         if sdl_name in TRIGGERS:
             return f"a{identifier}~" if negative else f"a{identifier}"
-        # a button or a direction of the pad on half an axis
         return f"-a{identifier}" if negative else f"+a{identifier}"
     return None
 
