@@ -6,7 +6,7 @@
 //  RK3326-Port:    St0len-One
 //  Target:         Rockchip RK3326 / Cortex-A35 / Mali-G31 MP2
 // ══════════════════════════════════════════════════════════════════════
-#include "native/port_options.h"     // Pfad bleibt — Header liegt in include/native/
+#include "native/port_options.h"
 
 #include "hal/gs.h"
 
@@ -55,10 +55,17 @@ Options load(const char* path) {
     char line[512];
     int  lineno = 0;
     int  known  = 0;
+    std::string section;
     while (std::fgets(line, sizeof(line), f)) {
         ++lineno;
         std::string s = trim(line);
         if (s.empty() || s[0] == '#' || s[0] == ';') continue;
+
+        // Sektions-Header: [video], [lighting], [fog]
+        if (s.size() >= 2 && s.front() == '[' && s.back() == ']') {
+            section = trim(s.substr(1, s.size() - 2));
+            continue;
+        }
 
         size_t eq = s.find('=');
         if (eq == std::string::npos) {
@@ -69,6 +76,11 @@ Options load(const char* path) {
 
         std::string key = trim(s.substr(0, eq));
         std::string val = trim(s.substr(eq + 1));
+
+        // Wenn wir in einer Sektion sind und der Schlüssel keinen Punkt
+        // enthaelt, mit dem Sektionsnamen praefixen.
+        if (!section.empty() && key.find('.') == std::string::npos)
+            key = section + "." + key;
 
         // ── Video ────────────────────────────────────────────────────
         if      (key == "video.aspect")        { o.aspect        = parse_float(val, o.aspect); ++known; }
