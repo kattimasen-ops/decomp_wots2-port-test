@@ -1,12 +1,13 @@
 #!/bin/bash
 # WOTS2.sh — Way of the Samurai 2 für M9 Pro / RK3326 / ArkOS4Clone
 #
-# Erststart: sucht wots2.iso, wots2.chd oder ein anderes Disc-Image und
-#            entpackt es nach wots2/extracted/. Danach startet der Launcher
-#            direkt die Binary.
+# Erststart: sucht wots2.chd, wots2.iso oder ein anderes Disc-Image und
+#            legt die Spieldateien nach wots2/extracted/. Danach startet
+#            der Launcher die Binary.
 #
-# CHD-Support: chdman (ARM64) liegt neben der wots2-Binary und wird
-#              zum Extrahieren von .chd-Dateien genutzt.
+# CHD-Support: chdman (ARM64) liegt neben der wots2-Binary und wird zum
+#              Extrahieren von .chd-Dateien genutzt. Die entstandene ISO
+#              wird im selben Lauf entpackt; die ISO bleibt nicht liegen.
 #
 # Benötigt: bsdtar (libarchive-tools) ODER 7z (p7zip-full) für Archive.
 
@@ -254,27 +255,17 @@ export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 export WOTS2_NO_VSYNC=1
 export WOTS2_BUTTON_REMAP=1
 
-# Glibc-Allocator (1 GB RAM): verhindert Page-Thrashing und Fragmentierung.
 export MALLOC_TRIM_THRESHOLD_=131072
 export MALLOC_MMAP_THRESHOLD_=131072
 
-# ── Mali-G31 DDK / AFBC / Shader-Cache ───────────────────────────────
 export MALI_AFBC=1
 export MALI_MAX_ASYNC_BUFFER_COUNT=2
 export MALI_BUFFER_PREALLOC=1
 
-# Shader-Programm-Cache (Halo-Effekt: ~50 MB nach mehreren Levels).
 export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-600}"
-
-# 2D-Draw-Call-Batching (ARM: <500 Draw Calls pro Frame auf Mali).
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
-
-# SDL2-Audio: groesserer Puffer, weniger Callback-Overhead.
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
-
-# Optional: KMSDRM Double-Buffer (niedrigere Latenz, mehr CPU-Last).
-# export SDL_KMSDRM_DOUBLE_BUFFER=1
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -284,146 +275,156 @@ if [ ! -x ./wots2 ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════
-# CHD-EXTRAKTION (falls eine .chd vorliegt)
+# HELFER: Einen Entpacker wählen (bsdtar > 7z > unzip).
 # ══════════════════════════════════════════════════════════════════════
-log_section "CHD-EXTRAKTION"
-
-CHD_FILE=""
-for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
-            "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
-    [ -f "$cand" ] && { CHD_FILE="$cand"; break; }
-done
-
-if [ -n "$CHD_FILE" ] && [ ! -d "$EXTRACTED" -o -z "$(ls -A "$EXTRACTED" 2>/dev/null)" ]; then
-    log "CHD-Datei gefunden: $CHD_FILE"
-
-    if [ ! -x "$CHDMAN" ]; then
-        log "FEHLER: chdman nicht gefunden unter $CHDMAN."
-        echo "FEHLER: chdman fehlt. Bitte den Port neu herunterladen." >&2
-        exit 1
-    fi
-
-    CHD_BASE="$(basename "$CHD_FILE" .chd)"
-    CHD_BASE="${CHD_BASE%.CHD}"
-    TMP_CHD="$GAMEDIR/.chd-extract"
-    rm -rf "$TMP_CHD"
-    mkdir -p "$TMP_CHD"
-
-    log "Extrahiere CHD nach ISO ..."
-    # extractdvd fuer DVD-basierte Discs (PS2), extractcd als Fallback.
-    if "$CHDMAN" extractdvd -i "$CHD_FILE" -o "$TMP_CHD/$CHD_BASE.iso" >>"$LOG" 2>&1; then
-        log "extractdvd erfolgreich."
-    elif "$CHDMAN" extractcd -i "$CHD_FILE" -o "$TMP_CHD/$CHD_BASE.cue" \
-                             -ob "$TMP_CHD/$CHD_BASE.bin" >>"$LOG" 2>&1; then
-        log "extractcd erfolgreich (CUE/BIN)."
-    else
-        log "FEHLER: chdman konnte die CHD nicht extrahieren."
-        echo "FEHLER: CHD-Extraktion fehlgeschlagen. Log: $LOG" >&2
-        rm -rf "$TMP_CHD"
-        exit 1
-    fi
-
-    # Gefundene ISO oder CUE/BIN nach extracted/ verschieben.
-    mkdir -p "$EXTRACTED"
-    for f in "$TMP_CHD"/*; do
-        [ -f "$f" ] && cp -a "$f" "$EXTRACTED/" 2>>"$LOG" || true
-    done
-    rm -rf "$TMP_CHD"
-
-    log "CHD-Extraktion abgeschlossen. Inhalt von extracted/:"
-    ls -la "$EXTRACTED" | head -20 | while IFS= read -r line; do log "  $line"; done
-else
-    if [ -n "$CHD_FILE" ]; then
-        log "CHD gefunden, aber extracted/ bereits befuellt — ueberspringe."
-    else
-        log "Keine CHD-Datei gefunden."
-    fi
-fi
+pick_extractor() {
+    if command -v bsdtar >/dev/null 2>&1; then echo "bsdtar"
+    elif command -v 7z     >/dev/null 2>&1; then echo "7z"
+    elif command -v 7za    >/dev/null 2>&1; then echo "7za"
+    elif command -v unzip  >/dev/null 2>&1; then echo "unzip"
+    else echo ""; fi
+}
 
 # ══════════════════════════════════════════════════════════════════════
-# ISO/ARCHIV-ENTPACKEN (Erststart)
+# HELFER: Entpackt eine ISO/Archiv-Datei nach "$EXTRACTED".
+#         Rückgabe 0 bei Erfolg, 1 sonst.
 # ══════════════════════════════════════════════════════════════════════
-log_section "ISO-ENTPACKEN"
-
-if [ -d "$EXTRACTED" ] && [ -n "$(ls -A "$EXTRACTED" 2>/dev/null)" ]; then
-    log "extracted/ bereits vorhanden — ueberspringe Entpacken."
-else
-    IMG=""
-    for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
-                "$GAMEDIR"/*.zip "$GAMEDIR"/*.7z "$GAMEDIR"/*.rar \
-                "$GAMEDIR"/*.tar.* "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/*.zip; do
-        [ -f "$cand" ] && { IMG="$cand"; break; }
-    done
-
-    if [ -z "$IMG" ]; then
-        log "FEHLER: Kein Disc-Image gefunden."
-        echo "FEHLER: Bitte 'wots2.iso', 'wots2.chd' oder ein Archiv (SLUS-208.93) in $GAMEDIR ablegen." >&2
-        exit 1
-    fi
-    log "Disc-Image: $IMG"
-
-    EXTRACTOR=""
-    if command -v bsdtar >/dev/null 2>&1; then EXTRACTOR="bsdtar"
-    elif command -v 7z >/dev/null 2>&1; then EXTRACTOR="7z"
-    elif command -v 7za >/dev/null 2>&1; then EXTRACTOR="7za"
-    elif command -v unzip >/dev/null 2>&1; then EXTRACTOR="unzip"
-    fi
-
-    if [ -z "$EXTRACTOR" ]; then
+unpack_image() {
+    local img="$1"
+    local extractor
+    extractor="$(pick_extractor)"
+    if [ -z "$extractor" ]; then
         log "FEHLER: Kein Entpacker gefunden (bsdtar/7z/unzip)."
-        echo "FEHLER: Bitte 'bsdtar' oder 'p7zip-full' installieren." >&2
-        exit 1
+        return 1
     fi
-    log "Entpacker: $EXTRACTOR"
+    log "Entpacker: $extractor"
 
-    TMP="$GAMEDIR/.extract-tmp"
-    rm -rf "$TMP"
-    mkdir -p "$TMP"
+    local tmp="$GAMEDIR/.extract-tmp"
+    rm -rf "$tmp"
+    mkdir -p "$tmp"
 
-    log "Entpacke nach $TMP ..."
-    case "$EXTRACTOR" in
+    log "Entpacke $img nach $tmp ..."
+    case "$extractor" in
         bsdtar)
-            bsdtar -xf "$IMG" -C "$TMP" 2>>"$LOG" || {
-                log "FEHLER: bsdtar fehlgeschlagen."
-                echo "FEHLER: Entpacken fehlgeschlagen (bsdtar)." >&2
-                rm -rf "$TMP"; exit 1
-            }
+            bsdtar -xf "$img" -C "$tmp" 2>>"$LOG" || return 1
             ;;
         7z|7za)
-            7z x -y -o"$TMP" "$IMG" >>"$LOG" 2>&1 || {
-                log "FEHLER: 7z fehlgeschlagen."
-                echo "FEHLER: Entpacken fehlgeschlagen (7z)." >&2
-                rm -rf "$TMP"; exit 1
-            }
+            7z x -y -o"$tmp" "$img" >>"$LOG" 2>&1 || return 1
             ;;
         unzip)
-            unzip -o "$IMG" -d "$TMP" >>"$LOG" 2>&1 || {
-                log "FEHLER: unzip fehlgeschlagen."
-                echo "FEHLER: Entpacken fehlgeschlagen (unzip)." >&2
-                rm -rf "$TMP"; exit 1
-            }
+            unzip -o "$img" -d "$tmp" >>"$LOG" 2>&1 || return 1
             ;;
     esac
 
     mkdir -p "$EXTRACTED"
-    SUBDIR=$(find "$TMP" -maxdepth 2 -type d -name "PS2" -o -type d -name "SLUS*" 2>/dev/null | head -n 1)
-    if [ -n "$SUBDIR" ] && [ -d "$SUBDIR" ]; then
-        log "Verschiebe Inhalt aus $SUBDIR"
-        cp -a "$SUBDIR"/. "$EXTRACTED"/ 2>>"$LOG" || true
+    local subdir
+    subdir="$(find "$tmp" -maxdepth 2 -type d \( -name 'PS2' -o -name 'SLUS*' \) 2>/dev/null | head -n 1)"
+    if [ -n "$subdir" ] && [ -d "$subdir" ]; then
+        log "Verschiebe Inhalt aus $subdir"
+        cp -a "$subdir"/. "$EXTRACTED"/ 2>>"$LOG" || true
     else
-        cp -a "$TMP"/. "$EXTRACTED"/ 2>>"$LOG" || true
+        cp -a "$tmp"/. "$EXTRACTED"/ 2>>"$LOG" || true
+    fi
+    rm -rf "$tmp"
+    return 0
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# ENT PACKEN — CHD zuerst, dann ISO, dann Archive. Alles in einem Lauf.
+# ══════════════════════════════════════════════════════════════════════
+log_section "SPIELDATEN ENTPACKEN"
+
+# Prüfen, ob schon Spieldaten vorliegen.
+if [ -f "$EXTRACTED/SLUS_208.93" ] || [ -f "$EXTRACTED/slus_208.93" ]; then
+    log "extracted/ enthaelt bereits SLUS_208.93 — ueberspringe Entpacken."
+else
+    NEEDS_UNPACK=1
+
+    # ── 1. CHD (falls vorhanden) zu ISO extrahieren und ISO entpacken ──
+    CHD_FILE=""
+    for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
+                "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
+        [ -f "$cand" ] && { CHD_FILE="$cand"; break; }
+    done
+
+    if [ -n "$CHD_FILE" ]; then
+        log "CHD gefunden: $CHD_FILE"
+        if [ ! -x "$CHDMAN" ]; then
+            log "FEHLER: chdman nicht gefunden unter $CHDMAN."
+            echo "FEHLER: chdman fehlt. Bitte den Port neu herunterladen." >&2
+            exit 1
+        fi
+
+        TMP_CHD="$GAMEDIR/.chd-extract"
+        rm -rf "$TMP_CHD"
+        mkdir -p "$TMP_CHD"
+        BASE="$(basename "$CHD_FILE")"
+        BASE="${BASE%.chd}"; BASE="${BASE%.CHD}"
+
+        log "Extrahiere CHD nach ISO ..."
+        CHD_ISO=""
+        if "$CHDMAN" extractdvd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.iso" >>"$LOG" 2>&1 \
+           && [ -f "$TMP_CHD/$BASE.iso" ]; then
+            CHD_ISO="$TMP_CHD/$BASE.iso"
+            log "extractdvd erfolgreich."
+        elif "$CHDMAN" extractcd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.cue" \
+                                 -ob "$TMP_CHD/$BASE.bin" >>"$LOG" 2>&1 \
+             && [ -f "$TMP_CHD/$BASE.bin" ]; then
+            CHD_ISO="$TMP_CHD/$BASE.bin"
+            log "extractcd erfolgreich (CUE/BIN)."
+        else
+            log "FEHLER: chdman konnte die CHD nicht extrahieren."
+            echo "FEHLER: CHD-Extraktion fehlgeschlagen. Log: $LOG" >&2
+            rm -rf "$TMP_CHD"
+            exit 1
+        fi
+
+        log "Entpacke die entstandene ISO/BIN ..."
+        if ! unpack_image "$CHD_ISO"; then
+            log "FEHLER: ISO-Entpacken fehlgeschlagen."
+            echo "FEHLER: ISO-Entpacken fehlgeschlagen. Log: $LOG" >&2
+            rm -rf "$TMP_CHD"
+            exit 1
+        fi
+        rm -rf "$TMP_CHD"
+        log "CHD-Verarbeitung abgeschlossen."
+        NEEDS_UNPACK=0
     fi
 
-    rm -rf "$TMP"
-    log "Entpacken abgeschlossen. Inhalt:"
+    # ── 2. ISO oder Archiv (falls noch nichts entpackt wurde) ──────────
+    if [ "$NEEDS_UNPACK" = "1" ]; then
+        IMG=""
+        for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
+                    "$GAMEDIR"/*.zip "$GAMEDIR"/*.7z "$GAMEDIR"/*.rar \
+                    "$GAMEDIR"/*.tar.* "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/*.zip; do
+            [ -f "$cand" ] && { IMG="$cand"; break; }
+        done
+
+        if [ -z "$IMG" ]; then
+            log "FEHLER: Kein Disc-Image und keine CHD gefunden."
+            echo "FEHLER: Bitte 'wots2.chd', 'wots2.iso' oder ein Archiv in $GAMEDIR ablegen." >&2
+            exit 1
+        fi
+        log "Disc-Image: $IMG"
+
+        if ! unpack_image "$IMG"; then
+            log "FEHLER: Entpacken fehlgeschlagen."
+            echo "FEHLER: Entpacken fehlgeschlagen. Log: $LOG" >&2
+            exit 1
+        fi
+    fi
+
+    # ── 3. Ergebnis prüfen ─────────────────────────────────────────────
+    log "Inhalt von extracted/:"
     ls -la "$EXTRACTED" | head -20 | while IFS= read -r line; do log "  $line"; done
 
     if [ ! -f "$EXTRACTED/SLUS_208.93" ] && [ ! -f "$EXTRACTED/slus_208.93" ]; then
-        log "WARNUNG: SLUS_208.93 nicht in extracted/ gefunden."
+        log "FEHLER: SLUS_208.93 fehlt in extracted/."
+        echo "FEHLER: SLUS_208.93 fehlt. Log: $LOG" >&2
         find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | while IFS= read -r line; do log "  $line"; done
-    else
-        log "SLUS_208.93 vorhanden — Extraktion OK."
+        exit 1
     fi
+    log "SLUS_208.93 vorhanden — Entpacken OK."
 fi
 
 # ══════════════════════════════════════════════════════════════════════
