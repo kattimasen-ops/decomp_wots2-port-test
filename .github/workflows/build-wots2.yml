@@ -149,22 +149,24 @@ jobs:
 
           # ════════════════════════════════════════════════════════════
           # AUS: diese sechs Patches haben das schwarze/weisse Bild
-          # verursacht. Sie werden EINZELN wieder aktiviert, sobald die
-          # Performance-Basis sauber laeuft.
+          # verursacht oder sind nicht getestet. Wird EINZELN wieder
+          # aktiviert, sobald die Performance-Basis sauber laeuft.
           #
-          # AUS: wots2-gs-shader-cache.py
-          # AUS: wots2-gs-batch-2d.py
-          # AUS: wots2-gs-combat.py
-          # AUS: wots2-gs-splash.py
-          # AUS: wots2-gs-perf-trace.py
-          # AUS: wots2-persistent-buffers.py
+          # AUS (bestätigt kaputt): wots2-persistent-buffers.py
+          #   → glMapBufferRange auf Mali-G31 liefert undefinierte
+          #     Vertex-Daten. Das war die Ursache des schwarzen Bildes.
+          # AUS (nicht getestet): wots2-gs-shader-cache.py
+          # AUS (nicht getestet): wots2-gs-batch-2d.py
+          # AUS (nicht getestet): wots2-gs-combat.py
+          # AUS (nicht getestet): wots2-gs-splash.py
+          # AUS (nicht getestet): wots2-gs-perf-trace.py
           # ════════════════════════════════════════════════════════════
+          echo "  (wots2-persistent-buffers.py  — AUS, Ursache des schwarzen Bildes)"
           echo "  (wots2-gs-shader-cache.py     — AUS)"
           echo "  (wots2-gs-batch-2d.py         — AUS)"
           echo "  (wots2-gs-combat.py           — AUS)"
           echo "  (wots2-gs-splash.py           — AUS)"
           echo "  (wots2-gs-perf-trace.py       — AUS)"
-          echo "  (wots2-persistent-buffers.py  — AUS)"
 
           # ── Kollision ───────────────────────────────────────────────
           S=$(find_script wots2-collision-neon.py)
