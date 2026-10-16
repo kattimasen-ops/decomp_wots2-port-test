@@ -2,16 +2,20 @@
 # WOTS2.sh — Way of the Samurai 2 für M9 Pro / RK3326 / ArkOS4Clone
 #
 # Erststart: sucht wots2.chd, wots2.iso oder ein anderes Disc-Image und
-#            legt die Spieldateien nach wots2/extracted/. Danach startet
-#            der Launcher die Binary.
+#            legt die Spieldateien nach wots2/extracted/.
 #
-# CHD-Support: chdman (ARM64) liegt neben der wots2-Binary und wird zum
-#              Extrahieren von .chd-Dateien genutzt. Die entstandene ISO
-#              wird im selben Lauf entpackt; die ISO bleibt nicht liegen.
+# Diagnose:  HALO-artiges Logging mit file/readelf/ldd-Dump,
+#            LD_DEBUG=libs-Probe und Signal-Erkennung.
 #
-# Benötigt: bsdtar (libarchive-tools) ODER 7z (p7zip-full) für Archive.
+# Steuerung:
+#   WOTS2_LIBDIAG=0  schaltet die LD_DEBUG-Probe ab (Default: 1)
+#   WOTS2_LIBDIAG=1  schaltet sie an
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
+
+# Diagnose-Lauf standardmäßig an (Halo-Erfahrung: deckt Bibliotheks-
+# Probleme auf, bevor das Spiel startet).
+export WOTS2_LIBDIAG="${WOTS2_LIBDIAG:-1}"
 
 # ── PFADE ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
@@ -43,10 +47,36 @@ log_section() {
     log "========================================================="
 }
 
+# ── KLEINE HELFER ────────────────────────────────────────────────────
+# Jede Zeile eines Kommandos einrücken und in das Log schreiben.
+log_pipe() {
+    while IFS= read -r line; do log "    $line"; done
+}
+
+# Datei-Diagnose: file + readelf + ldd für eine Binärdatei.
+log_binary_info() {
+    local bin="$1"
+    [ ! -e "$bin" ] && { log "  ($bin existiert nicht)"; return; }
+    if command -v file >/dev/null 2>&1; then
+        log "  file $bin:"
+        file "$bin" 2>&1 | log_pipe
+    fi
+    if command -v readelf >/dev/null 2>&1; then
+        log "  readelf -d $bin | NEEDED:"
+        readelf -d "$bin" 2>/dev/null | grep NEEDED | log_pipe || log "    (keine NEEDED)"
+    fi
+    if command -v ldd >/dev/null 2>&1; then
+        log "  ldd $bin:"
+        ldd "$bin" 2>&1 | log_pipe || true
+    fi
+}
+
 log_section "WOTS2 START"
 log "SCRIPT_DIR=$SCRIPT_DIR"
 log "GAMEDIR=$GAMEDIR"
 log "Kernel=$(uname -r), Arch=$(uname -m)"
+log "Datum=$(date)"
+log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG"
 
 # ── LOCK ─────────────────────────────────────────────────────────────
 exec 9> /tmp/wots2-lock 2>/dev/null || true
@@ -73,7 +103,7 @@ if [ -n "$PM_CONTROLFOLDER" ] && [ -f "$PM_CONTROLFOLDER/control.txt" ]; then
         source "$PM_CONTROLFOLDER/mod_${CFW_NAME}.txt" 2>/dev/null || true
     fi
     command -v get_controls >/dev/null 2>&1 && get_controls 2>/dev/null || true
-    log "PortMaster control.txt geladen."
+    log "PortMaster control.txt geladen aus $PM_CONTROLFOLDER"
 fi
 
 if [ -n "${sdl_controllerconfig:-}" ]; then
@@ -99,6 +129,8 @@ if [ -n "$cpu_governor_path" ]; then
     cpu_saved=$(cat "$cpu_governor_path" 2>/dev/null)
     log "CPU-Governor: $cpu_saved -> performance"
     echo performance > "$cpu_governor_path" 2>/dev/null || true
+else
+    log "CPU-Governor: kein Pfad gefunden"
 fi
 for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
     [ -w "$cpu/cpufreq/scaling_governor" ] && \
@@ -120,9 +152,11 @@ if [ -n "$gpu_devfreq_path" ]; then
         max_freq=$(tr ' ' '\n' < "$gpu_devfreq_path/available_frequencies" | sort -n | tail -n 1)
         [ -n "$max_freq" ] && echo "$max_freq" > "$gpu_devfreq_path/min_freq" 2>/dev/null || true
     fi
+else
+    log "GPU-Governor: kein Devfreq-Pfad gefunden"
 fi
 
-# ── ZRAM mit lz4 (schneller als lzo auf dem Cortex-A35) ──────────────
+# ── ZRAM mit lz4 ─────────────────────────────────────────────────────
 if ! swapon --show 2>/dev/null | grep -q zram; then
     modprobe zram 2>/dev/null || true
     if [ -e /dev/zram0 ]; then
@@ -137,6 +171,8 @@ if ! swapon --show 2>/dev/null | grep -q zram; then
         swapon /dev/zram0 2>/dev/null || true
         log "ZRAM aktiviert."
     fi
+else
+    log "ZRAM bereits aktiv."
 fi
 
 WOTS2_SERVICE_STATE="/tmp/wots2-services.$$"
@@ -196,13 +232,21 @@ mkdir -p "$GAMEDIR/wots2_card" "$GAMEDIR/save" "$GAMEDIR/screenshots" \
          "$GAMEDIR/shader_cache" 2>/dev/null || true
 
 # ── DRI-RECHTE ───────────────────────────────────────────────────────
+log_section "DRI-RECHTE"
 for node in /dev/dri/card0 /dev/dri/renderD128 /dev/fb0; do
-    if [ -e "$node" ] && { [ ! -r "$node" ] || [ ! -w "$node" ]; }; then
-        sudo -n chmod 666 "$node" 2>/dev/null || true
+    if [ -e "$node" ]; then
+        if [ ! -r "$node" ] || [ ! -w "$node" ]; then
+            log "$node war nicht les/schreibbar — setze chmod 666"
+            sudo -n chmod 666 "$node" 2>/dev/null || true
+        fi
+        log "$node: $(stat -c '%A %U:%G' "$node" 2>/dev/null)"
+    else
+        log "$node: nicht vorhanden"
     fi
 done
 
 # ── MALI-SYMLINKS ────────────────────────────────────────────────────
+log_section "MALI-SYMLINKS"
 SYSTEM_MALI=""
 for candidate in \
     /usr/lib/aarch64-linux-gnu/libmali-bifrost-g31-rxp0-gbm.so \
@@ -226,7 +270,8 @@ if [ -n "$SYSTEM_MALI" ]; then
         ln -sf "$SYSTEM_MALI" "/tmp/wots2-mali/$name"
     done
     export LD_LIBRARY_PATH="/tmp/wots2-mali:$GAMEDIR/libs.aarch64:$GAMEDIR:/roms/ports/libs:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}"
-    log "Mali-Symlinks aus $SYSTEM_MALI erstellt."
+    log "Mali-Blob: $SYSTEM_MALI"
+    log "Symlinks in /tmp/wots2-mali/ erstellt."
 else
     log "WARNUNG: Kein Mali-Blob gefunden — nutze System-Libraries."
     export LD_LIBRARY_PATH="$GAMEDIR/libs.aarch64:$GAMEDIR:/roms/ports/libs:/usr/lib/aarch64-linux-gnu:${LD_LIBRARY_PATH:-}"
@@ -275,7 +320,72 @@ if [ ! -x ./wots2 ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════
-# HELFER: Einen Entpacker wählen (bsdtar > 7z > unzip).
+# DIAGNOSE — Halo-Erfahrung: bevor das Spiel startet, alles auflisten,
+# was beim Laden schiefgehen koennte.
+# ══════════════════════════════════════════════════════════════════════
+log_section "DIAGNOSE"
+
+log "Umgebung:"
+log "  LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+log "  SDL_VIDEODRIVER=$SDL_VIDEODRIVER"
+log "  WOTS2_DATA_ROOT=$WOTS2_DATA_ROOT"
+log "  WOTS2_SAVE_ROOT=$WOTS2_SAVE_ROOT"
+
+log ""
+log "Binary ./wots2:"
+log_binary_info "./wots2"
+
+if [ -x "$CHDMAN" ]; then
+    log ""
+    log "Binary ./chdman:"
+    log_binary_info "./chdman"
+fi
+
+# ── LD_DEBUG=libs Probe ──────────────────────────────────────────────
+LIBDIAG_LOG="$GAMEDIR/wots2-libdiag.txt"
+if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
+    log ""
+    log "WOTS2_LIBDIAG=1: LD_DEBUG=libs Probe (max 5 Sekunden) ..."
+    : > "$LIBDIAG_LOG"
+
+    PROBE_OK=0
+    if command -v timeout >/dev/null 2>&1; then
+        ( LD_DEBUG=libs timeout 5 ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" || PROBE_OK=1
+    else
+        ( LD_DEBUG=libs ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" &
+        DIAG_PID=$!
+        ( sleep 5 && kill -TERM "$DIAG_PID" 2>/dev/null ) &
+        KILLER_PID=$!
+        wait "$DIAG_PID" 2>/dev/null || PROBE_OK=1
+        kill -TERM "$KILLER_PID" 2>/dev/null || true
+        wait "$KILLER_PID" 2>/dev/null || true
+    fi
+
+    if [ -s "$LIBDIAG_LOG" ]; then
+        # Nur die ersten 200 Zeilen behalten (sonst wird das Log riesig).
+        head -200 "$LIBDIAG_LOG" > "$LIBDIAG_LOG.head"
+        mv -f "$LIBDIAG_LOG.head" "$LIBDIAG_LOG"
+        LINES=$(wc -l < "$LIBDIAG_LOG")
+        log "  $LIBDIAG_LOG geschrieben ($LINES Zeilen)"
+        log "  Erste 20 Zeilen:"
+        head -20 "$LIBDIAG_LOG" | log_pipe
+    else
+        log "  WARNUNG: LD_DEBUG hat nichts geschrieben."
+        log "  (Das ist verdaechtig — pruefe, ob ./wots2 wirklich startet.)"
+    fi
+
+    if [ "$PROBE_OK" = "1" ]; then
+        log "  Hinweis: Der Probe-Lauf endete nicht regulaer —"
+        log "  das Spiel ist entweder abgestuerzt oder braucht mehr als 5 Sekunden."
+    fi
+else
+    log ""
+    log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG (Probe uebersprungen)."
+    log "Zum Aktivieren: WOTS2_LIBDIAG=1 in die Umgebung setzen."
+fi
+
+# ══════════════════════════════════════════════════════════════════════
+# HELFER: Entpacker wählen
 # ══════════════════════════════════════════════════════════════════════
 pick_extractor() {
     if command -v bsdtar >/dev/null 2>&1; then echo "bsdtar"
@@ -285,16 +395,12 @@ pick_extractor() {
     else echo ""; fi
 }
 
-# ══════════════════════════════════════════════════════════════════════
-# HELFER: Entpackt eine ISO/Archiv-Datei nach "$EXTRACTED".
-#         Rückgabe 0 bei Erfolg, 1 sonst.
-# ══════════════════════════════════════════════════════════════════════
 unpack_image() {
     local img="$1"
     local extractor
     extractor="$(pick_extractor)"
     if [ -z "$extractor" ]; then
-        log "FEHLER: Kein Entpacker gefunden (bsdtar/7z/unzip)."
+        log "FEHLER: Kein Entpacker gefunden."
         return 1
     fi
     log "Entpacker: $extractor"
@@ -330,17 +436,16 @@ unpack_image() {
 }
 
 # ══════════════════════════════════════════════════════════════════════
-# ENT PACKEN — CHD zuerst, dann ISO, dann Archive. Alles in einem Lauf.
+# ENTPACKEN — CHD zuerst, dann ISO, dann Archive
 # ══════════════════════════════════════════════════════════════════════
 log_section "SPIELDATEN ENTPACKEN"
 
-# Prüfen, ob schon Spieldaten vorliegen.
 if [ -f "$EXTRACTED/SLUS_208.93" ] || [ -f "$EXTRACTED/slus_208.93" ]; then
     log "extracted/ enthaelt bereits SLUS_208.93 — ueberspringe Entpacken."
 else
     NEEDS_UNPACK=1
 
-    # ── 1. CHD (falls vorhanden) zu ISO extrahieren und ISO entpacken ──
+    # ── 1. CHD ───────────────────────────────────────────────────────
     CHD_FILE=""
     for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
                 "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
@@ -351,7 +456,7 @@ else
         log "CHD gefunden: $CHD_FILE"
         if [ ! -x "$CHDMAN" ]; then
             log "FEHLER: chdman nicht gefunden unter $CHDMAN."
-            echo "FEHLER: chdman fehlt. Bitte den Port neu herunterladen." >&2
+            echo "FEHLER: chdman fehlt." >&2
             exit 1
         fi
 
@@ -391,7 +496,7 @@ else
         NEEDS_UNPACK=0
     fi
 
-    # ── 2. ISO oder Archiv (falls noch nichts entpackt wurde) ──────────
+    # ── 2. ISO oder Archiv ───────────────────────────────────────────
     if [ "$NEEDS_UNPACK" = "1" ]; then
         IMG=""
         for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
@@ -402,7 +507,7 @@ else
 
         if [ -z "$IMG" ]; then
             log "FEHLER: Kein Disc-Image und keine CHD gefunden."
-            echo "FEHLER: Bitte 'wots2.chd', 'wots2.iso' oder ein Archiv in $GAMEDIR ablegen." >&2
+            echo "FEHLER: Bitte 'wots2.chd' oder 'wots2.iso' in $GAMEDIR ablegen." >&2
             exit 1
         fi
         log "Disc-Image: $IMG"
@@ -414,14 +519,14 @@ else
         fi
     fi
 
-    # ── 3. Ergebnis prüfen ─────────────────────────────────────────────
+    # ── 3. Ergebnis pruefen ─────────────────────────────────────────
     log "Inhalt von extracted/:"
-    ls -la "$EXTRACTED" | head -20 | while IFS= read -r line; do log "  $line"; done
+    ls -la "$EXTRACTED" | head -20 | log_pipe
 
     if [ ! -f "$EXTRACTED/SLUS_208.93" ] && [ ! -f "$EXTRACTED/slus_208.93" ]; then
         log "FEHLER: SLUS_208.93 fehlt in extracted/."
         echo "FEHLER: SLUS_208.93 fehlt. Log: $LOG" >&2
-        find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | while IFS= read -r line; do log "  $line"; done
+        find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | log_pipe
         exit 1
     fi
     log "SLUS_208.93 vorhanden — Entpacken OK."
@@ -452,6 +557,8 @@ trap cleanup_all EXIT
 
 ./wots2 extracted > "$WOTS2_STDOUT" 2> "$WOTS2_STDERR" &
 WOTS2_PID=$!
+log "PID=$WOTS2_PID"
+
 forward_signal() {
     [ -n "$WOTS2_PID" ] && kill -0 "$WOTS2_PID" 2>/dev/null && \
         kill -TERM "$WOTS2_PID" 2>/dev/null || true
@@ -466,7 +573,70 @@ WOTS2_STATUS=$?
     wait "$GPTOKEYB_PID" 2>/dev/null || true
 }
 
+# ── POST-MORTEM ──────────────────────────────────────────────────────
 log "wots2 beendet mit Status $WOTS2_STATUS"
+
+if [ "$WOTS2_STATUS" -gt 128 ]; then
+    SIGNAL=$((WOTS2_STATUS - 128))
+    case "$SIGNAL" in
+        4)  SIGNAME="SIGILL — Illegal Instruction (auf Cortex-A35 oft eine LSE-Atomic oder falsche CPU-Flags)" ;;
+        6)  SIGNAME="SIGABRT — Abort (meist eine fehlgeschlagene Zusicherung)" ;;
+        7)  SIGNAME="SIGBUS — Bus Error (meist ein Speicherzugriff auf eine ungueltige Adresse)" ;;
+        8)  SIGNAME="SIGFPE — Floating-Point Exception" ;;
+        9)  SIGNAME="SIGKILL — von aussen getoetet (OOM-Killer?)" ;;
+        11) SIGNAME="SIGSEGV — Segmentation Fault (Null-Dereferenz oder Stack-Ueberlauf)" ;;
+        15) SIGNAME="SIGTERM — regulaer beendet" ;;
+        *)  SIGNAME="Signal $SIGNAL" ;;
+    esac
+    log "wots2 wurde durch $SIGNAME getoetet."
+fi
+
+# stdout des Spiels
+if [ -s "$WOTS2_STDOUT" ]; then
+    log ""
+    log "Auszug aus wots2-stdout.txt (letzte 40 Zeilen):"
+    tail -40 "$WOTS2_STDOUT" | log_pipe
+else
+    log "wots2-stdout.txt ist leer."
+fi
+
+# stderr des Spiels
+if [ -s "$WOTS2_STDERR" ]; then
+    log ""
+    log "Auszug aus wots2-stderr.txt (letzte 40 Zeilen):"
+    tail -40 "$WOTS2_STDERR" | log_pipe
+
+    # Nach bekannten Fehler-Mustern suchen.
+    log ""
+    log "Erkannte Fehlermuster in wots2-stderr.txt:"
+    if grep -q "shader error" "$WOTS2_STDERR"; then
+        log "  - Shader-Kompilierung fehlgeschlagen: siehe [GS] shader error"
+    fi
+    if grep -q "link error" "$WOTS2_STDERR"; then
+        log "  - Shader-Link fehlgeschlagen: siehe [GS] link error"
+    fi
+    if grep -q "no OpenGL 3.3" "$WOTS2_STDERR"; then
+        log "  - Kein OpenGL 3.3-Kontext — Mali-Blob oder EGL-Config stimmt nicht"
+    fi
+    if grep -q "not found" "$WOTS2_STDERR"; then
+        log "  - Eine Bibliothek wurde nicht gefunden"
+    fi
+    if grep -q "SDL_CreateWindow" "$WOTS2_STDERR"; then
+        log "  - SDL_CreateWindow ist gescheitert — evtl. KMSDRM-Problem"
+    fi
+    if grep -q "GLIBCXX" "$WOTS2_STDERR"; then
+        log "  - GLIBCXX-Version zu alt — das sollte durch -static-libstdc++ nicht passieren"
+    fi
+    if grep -q "Segmentation fault" "$WOTS2_STDERR"; then
+        log "  - Segmentation Fault"
+    fi
+    grep -c "" "$WOTS2_STDERR" 2>/dev/null | {
+        read -r n; log "  (stderr hat $n Zeilen insgesamt)"
+    }
+else
+    log "wots2-stderr.txt ist leer."
+fi
+
 log_section "ENDE"
 sync
 exit "$WOTS2_STATUS"
