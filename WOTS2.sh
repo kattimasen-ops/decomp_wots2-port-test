@@ -14,7 +14,7 @@
 #   WOTS2_FX_SCALE=N               Effekt-Anzahl (Default: 0.4)
 #   WOTS2_NO_CULL=0/1              Frustum-Culling aus (Default: 0)
 #   WOTS2_NO_BATCH=0/1             2D-Batching aus (Default: 0)
-#   WOTS2_PERSISTENT_BUFFERS=0/1   glBufferSubData statt glBufferData (Default: 1)
+#   WOTS2_PERSISTENT_BUFFERS=0/1   glBufferSubData statt glBufferData (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
 #   WOTS2_SHADER_LRU=N             Frames bis Shader-Unload (Default: 120)
 #   WOTS2_SPLASH=N                 Splash-Dauer in Sekunden (Default: 2.5)
@@ -137,13 +137,19 @@ if [ -n "$PM_CONTROLFOLDER" ] && [ -f "$PM_CONTROLFOLDER/control.txt" ]; then
     log "PortMaster control.txt geladen aus $PM_CONTROLFOLDER"
 fi
 
-# ── SDL-GAMECONTROLLER + DIAGNOSE-DUMP ───────────────────────────────
+# ── SDL-GAMECONTROLLER + VOLL-DIAGNOSE ───────────────────────────────
 SDL_DIAG="$GAMEDIR/sdl_diag.txt"
 : > "$SDL_DIAG"
 {
     echo "=== WOTS2 SDL-Diagnose $(date) ==="
-    echo "--- /proc/bus/input/devices (N: Name) ---"
-    grep 'N: Name=' /proc/bus/input/devices 2>/dev/null || echo "(nicht lesbar)"
+    echo "--- /proc/bus/input/devices (volle Sektionen, mindestens 60 Zeilen) ---"
+    if [ -f /proc/bus/input/devices ]; then
+        awk '
+            /^I: Bus=/ || /^N: Name=/ || /^P: Phys=/ || /^S: Sysfs=/ || /^U: Uniq=/ || /^H: Handlers=/ || /^B: / { print }
+        ' /proc/bus/input/devices
+    else
+        echo "(nicht lesbar)"
+    fi
     echo "--- es_input.cfg Kandidaten ---"
     for f in /userdata/system/configs/emulationstation/es_input.cfg \
              /usr/share/emulationstation/es_input.cfg; do
@@ -153,6 +159,7 @@ SDL_DIAG="$GAMEDIR/sdl_diag.txt"
             echo "### /$f"
         fi
     done
+    echo "--- Hinweis: keine es_input.cfg heisst, sdl_mapping.py gibt nichts aus ---"
 } >> "$SDL_DIAG" 2>&1
 
 if [ -n "${sdl_controllerconfig:-}" ]; then
@@ -164,13 +171,11 @@ elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
         export SDL_GAMECONTROLLERCONFIG="$SDL_MAP"
         log "SDL_GAMECONTROLLERCONFIG aus sdl_mapping.py gesetzt."
     else
-        log "WARNUNG: sdl_mapping.py hat nichts ausgegeben — SDL faellt auf die interne Datenbank zurueck."
+        log "sdl_mapping.py hat nichts ausgegeben — SDL faellt auf die interne Datenbank zurueck."
     fi
     {
         echo "--- sdl_mapping.py stdout ---"
         echo "${SDL_MAP:-（leer）}"
-        echo "--- SDL_GAMECONTROLLERCONFIG ---"
-        echo "${SDL_GAMECONTROLLERCONFIG:-（nicht gesetzt）}"
     } >> "$SDL_DIAG" 2>&1
 fi
 
@@ -179,7 +184,7 @@ if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
     printf '%s\n' "$SDL_GAMECONTROLLERCONFIG" > "$SDL_GAMECONTROLLERCONFIG_FILE" 2>/dev/null || true
     log "SDL_GAMECONTROLLERCONFIG_FILE gesetzt: $SDL_GAMECONTROLLERCONFIG_FILE"
 else
-    log "WARNUNG: keine SDL_GAMECONTROLLERCONFIG — gptokeyb Kill-Hotkey evtl. inaktiv."
+    log "Keine SDL_GAMECONTROLLERCONFIG — SDL benutzt die interne Datenbank."
 fi
 
 # ── SYSTEMOPTIMIERUNG ────────────────────────────────────────────────
@@ -383,11 +388,14 @@ export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
-export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-1}"
+
+# Persistent buffers: zurueckgesetzt auf 0, weil der Verdacht besteht,
+# dass die glMapBufferRange-Variante den weissen Bildschirm verursacht.
+export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-0}"
 
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.4}"
-export WOTS2_SPLASH="${WOTS2_SPLASH:-0}"
+export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
 export WOTS2_NO_CULL="${WOTS2_NO_CULL:-0}"
 export WOTS2_PERF_TRACE="${WOTS2_PERF_TRACE:-0}"
 
