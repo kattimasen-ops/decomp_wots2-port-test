@@ -112,8 +112,8 @@ jobs:
       - name: Cross-Sysroot einrichten
         run: bash scripts/ci-setup-sysroot.sh
 
-      # ── SDL2 MIT KMSDRM-PATCHES (PAGEFLIP + WINDOW-FLAG) ────────────
-      - name: SDL2 mit KMSDRM-Patches bauen
+      # ── SDL2 MIT KMSDRM-PATCHES + ALSA ──────────────────────────────
+      - name: SDL2 mit KMSDRM-Patches und ALSA bauen
         run: bash scripts/ci-build-sdl2.sh
 
       # ── STUBS (libmali, libdecor) ───────────────────────────────────
@@ -162,7 +162,7 @@ jobs:
             echo "  (wots2-gles-precision.py nicht gefunden — uebersprungen)"
           fi
 
-          # ── gs.cpp: NEON Vertex-Lerp + Frustum-Culling ──────────────
+          # ── gs.cpp: NEON Vertex-Lerp + Frustum-Culling (v3) ─────────
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
@@ -199,7 +199,7 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-splash.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: Diagnose init() + GL-Profil auf ES ──────────────
+          # ── gs.cpp: Diagnose init() + GL-Profil auf ES 3.2 ──────────
           S=$(find_script wots2-gs-init-diag.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-init-diag.py nicht gefunden — uebersprungen)"
@@ -237,6 +237,11 @@ jobs:
           S=$(find_script wots2-fx-scale.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
                     || echo "  (wots2-fx-scale.py nicht gefunden — uebersprungen)"
+
+          # ── motion.cpp: NEON fuer Vektor-Operationen (NEU) ──────────
+          S=$(find_script wots2-motion-neon.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
+                    || echo "  (wots2-motion-neon.py nicht gefunden — uebersprungen)"
 
           # ── SDL2 KMSDRM Pageflip-Patch (Install-Tree, Nachlauf) ─────
           # Hinweis: Der Pageflip- und der Window-Flag-Patch laufen bereits
@@ -324,7 +329,7 @@ jobs:
             [ -e "$lib" ] && cp -a "$lib" "$STAGE/wots2/libs.aarch64/" || true
           done
 
-          # ── Gepatchte SDL2 ins Bundle (NEU) ──────────────────────────
+          # ── Gepatchte SDL2 ins Bundle ────────────────────────────────
           # Ohne diese Kopie laedt die Binary auf dem Geraet die
           # System-SDL2 von ArkOS — die hat den KMSDRM-Pageflip-Patch
           # NICHT und ist in manchen Versionen zu alt fuer den
