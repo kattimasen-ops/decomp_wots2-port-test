@@ -1,20 +1,30 @@
 #!/bin/bash
 # WOTS2.sh — Way of the Samurai 2 für M9 Pro / RK3326 / ArkOS4Clone
 #
+# RK3326-Port: St0len-One
+# Target:      Rockchip RK3326 / Cortex-A35 / Mali-G31 MP2
+#
 # Erststart: sucht wots2.chd, wots2.iso oder ein anderes Disc-Image und
 #            legt die Spieldateien nach wots2/extracted/.
 #
-# Diagnose:  HALO-artiges Logging mit file/readelf/ldd-Dump,
+# CHD-Support: chdman (ARM64) liegt neben der wots2-Binary und wird zum
+#              Extrahieren von .chd-Dateien genutzt. Die entstandene ISO
+#              wird im selben Lauf entpackt; die ISO bleibt nicht liegen.
+#
+# Diagnose:  Halo-artiges Logging mit file/readelf/ldd-Dump,
 #            LD_DEBUG=libs-Probe und Signal-Erkennung.
 #
 # Steuerung:
-#   WOTS2_LIBDIAG=0  schaltet die LD_DEBUG-Probe ab (Default: 1)
-#   WOTS2_LIBDIAG=1  schaltet sie an
+#   WOTS2_LIBDIAG=0/1       LD_DEBUG-Probe (Default: 1)
+#   WOTS2_FX_SCALE=N        Effekt-Anzahl (Default: 1.0, empfohlen bei
+#                           Kaempfen: 0.6 oder 0.4)
+#   WOTS2_SHADER_CACHE=0/1  Shader-Cache (Default: 1)
+#   WOTS2_NO_BATCH=0/1      2D-Batching (Default: 0)
+#   WOTS2_SPLASH=N          Splash-Dauer in Sekunden (Default: 2.5)
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
-# Diagnose-Lauf standardmäßig an (Halo-Erfahrung: deckt Bibliotheks-
-# Probleme auf, bevor das Spiel startet).
+# Diagnose-Lauf standardmäßig an (Halo-Erfahrung).
 export WOTS2_LIBDIAG="${WOTS2_LIBDIAG:-1}"
 
 # ── PFADE ────────────────────────────────────────────────────────────
@@ -47,13 +57,12 @@ log_section() {
     log "========================================================="
 }
 
-# ── KLEINE HELFER ────────────────────────────────────────────────────
-# Jede Zeile eines Kommandos einrücken und in das Log schreiben.
+# Jede Zeile einrücken und ins Log schreiben.
 log_pipe() {
     while IFS= read -r line; do log "    $line"; done
 }
 
-# Datei-Diagnose: file + readelf + ldd für eine Binärdatei.
+# file + readelf + ldd für eine Binärdatei.
 log_binary_info() {
     local bin="$1"
     [ ! -e "$bin" ] && { log "  ($bin existiert nicht)"; return; }
@@ -156,7 +165,7 @@ else
     log "GPU-Governor: kein Devfreq-Pfad gefunden"
 fi
 
-# ── ZRAM mit lz4 ─────────────────────────────────────────────────────
+# ── ZRAM mit lz4 (schneller als lzo auf dem Cortex-A35) ──────────────
 if ! swapon --show 2>/dev/null | grep -q zram; then
     modprobe zram 2>/dev/null || true
     if [ -e /dev/zram0 ]; then
@@ -300,17 +309,35 @@ export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 export WOTS2_NO_VSYNC=1
 export WOTS2_BUTTON_REMAP=1
 
+# Glibc-Allocator (1 GB RAM)
 export MALLOC_TRIM_THRESHOLD_=131072
 export MALLOC_MMAP_THRESHOLD_=131072
 
+# ── Mali-G31 DDK / AFBC / Shader-Cache ───────────────────────────────
 export MALI_AFBC=1
 export MALI_MAX_ASYNC_BUFFER_COUNT=2
 export MALI_BUFFER_PREALLOC=1
 
+# Shader-Programm-Cache (Halo-Effekt: ~50 MB nach mehreren Levels).
 export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-600}"
+
+# 2D-Draw-Call-Batching (ARM: <500 Draw Calls pro Frame auf Mali).
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
+
+# SDL2-Audio: groesserer Puffer, weniger Callback-Overhead.
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
+
+# FX-Skalierung: 1.0 = unveraendert, 0.5 = halb so viele Effekte,
+# 0.0 = keine Mehrfach-Spawns (Einzeleffekte bleiben).
+# Empfohlen: 1.0 beim ersten Test; bei Kaempfen auf 0.6 oder 0.4.
+export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-1.0}"
+
+# Boot-Splash: Dauer in Sekunden (0 = aus).
+export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
+
+# Optional: KMSDRM Double-Buffer (niedrigere Latenz, mehr CPU-Last).
+# export SDL_KMSDRM_DOUBLE_BUFFER=1
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -330,6 +357,12 @@ log "  LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 log "  SDL_VIDEODRIVER=$SDL_VIDEODRIVER"
 log "  WOTS2_DATA_ROOT=$WOTS2_DATA_ROOT"
 log "  WOTS2_SAVE_ROOT=$WOTS2_SAVE_ROOT"
+log "  WOTS2_SHADER_CACHE=$WOTS2_SHADER_CACHE"
+log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
+log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
+log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
+log "  WOTS2_SPLASH=$WOTS2_SPLASH"
+log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
 log ""
 log "Binary ./wots2:"
@@ -362,7 +395,6 @@ if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
     fi
 
     if [ -s "$LIBDIAG_LOG" ]; then
-        # Nur die ersten 200 Zeilen behalten (sonst wird das Log riesig).
         head -200 "$LIBDIAG_LOG" > "$LIBDIAG_LOG.head"
         mv -f "$LIBDIAG_LOG.head" "$LIBDIAG_LOG"
         LINES=$(wc -l < "$LIBDIAG_LOG")
@@ -591,7 +623,6 @@ if [ "$WOTS2_STATUS" -gt 128 ]; then
     log "wots2 wurde durch $SIGNAME getoetet."
 fi
 
-# stdout des Spiels
 if [ -s "$WOTS2_STDOUT" ]; then
     log ""
     log "Auszug aus wots2-stdout.txt (letzte 40 Zeilen):"
@@ -600,13 +631,11 @@ else
     log "wots2-stdout.txt ist leer."
 fi
 
-# stderr des Spiels
 if [ -s "$WOTS2_STDERR" ]; then
     log ""
     log "Auszug aus wots2-stderr.txt (letzte 40 Zeilen):"
     tail -40 "$WOTS2_STDERR" | log_pipe
 
-    # Nach bekannten Fehler-Mustern suchen.
     log ""
     log "Erkannte Fehlermuster in wots2-stderr.txt:"
     if grep -q "shader error" "$WOTS2_STDERR"; then
@@ -625,7 +654,7 @@ if [ -s "$WOTS2_STDERR" ]; then
         log "  - SDL_CreateWindow ist gescheitert — evtl. KMSDRM-Problem"
     fi
     if grep -q "GLIBCXX" "$WOTS2_STDERR"; then
-        log "  - GLIBCXX-Version zu alt — das sollte durch -static-libstdc++ nicht passieren"
+        log "  - GLIBCXX-Version zu alt — sollte durch -static-libstdc++ nicht passieren"
     fi
     if grep -q "Segmentation fault" "$WOTS2_STDERR"; then
         log "  - Segmentation Fault"
