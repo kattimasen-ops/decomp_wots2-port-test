@@ -15,11 +15,7 @@ tar -xzf /tmp/sdl2.tar.gz -C "$SRC" --strip-components=1
 python3 "$GITHUB_WORKSPACE/patches/sdl2-force-kmsdrm.py" \
     "$SRC/cmake/sdlchecks.cmake"
 
-# ── KMSDRM Window-Flag-Patch (NEU) ────────────────────────────────────
-# Muss VOR dem Pageflip-Patch laufen, weil beide dieselbe Datei-Gruppe
-# betreffen. Der Window-Flag-Patch zielt auf SDL_kmsdrmvideo.c, der
-# Pageflip-Patch auf SDL_kmsdrmopengles.c — kein Konflikt, aber
-# Reihenfolge bleibt deterministisch.
+# ── KMSDRM Window-Flag-Patch ──────────────────────────────────────────
 echo "== SDL2 KMSDRM Window-Flag-Patch =="
 python3 "$GITHUB_WORKSPACE/patches/sdl2-kmsdrm-window.py" "$SRC"
 
@@ -57,6 +53,24 @@ else
     exit 1
 fi
 
+# ── ALSA-Pfade fuer Cross-Compile aufloesen ──────────────────────────
+# FindALSA.cmake findet die arm64-libasound bei Cross-Compiles nicht
+# automatisch, weil sie unter /usr/lib/aarch64-linux-gnu/ liegt und
+# CMake bei cross-compiling die Host-Pfade bevorzugt. Wir setzen
+# ALSA_LIBRARY und ALSA_INCLUDE_DIR explizit auf die arm64-Version.
+ALSA_LIB_ARM64="/usr/lib/aarch64-linux-gnu/libasound.so"
+ALSA_INC_ARM64="/usr/include"
+if [ ! -e "$ALSA_LIB_ARM64" ]; then
+    echo "FEHLER: $ALSA_LIB_ARM64 fehlt — libasound2-dev:arm64 nicht installiert?"
+    exit 1
+fi
+if [ ! -f "$ALSA_INC_ARM64/alsa/asoundlib.h" ]; then
+    echo "FEHLER: $ALSA_INC_ARM64/alsa/asoundlib.h fehlt — Header nicht gefunden?"
+    exit 1
+fi
+echo "ALSA arm64 lib: $ALSA_LIB_ARM64"
+echo "ALSA arm64 inc: $ALSA_INC_ARM64"
+
 # ── CMake konfigurieren ───────────────────────────────────────────────
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/aarch64-arkos.cmake" \
@@ -66,7 +80,9 @@ cmake -S "$SRC" -B "$BUILD" -G Ninja \
     -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF \
     -DSDL_X11=OFF -DSDL_WAYLAND=OFF -DSDL_KMSDRM=ON \
     -DSDL_OPENGL=OFF -DSDL_OPENGLES=ON \
-    -DSDL_PULSEAUDIO=OFF -DSDL_ALSA=ON
+    -DSDL_PULSEAUDIO=OFF -DSDL_ALSA=ON \
+    -DALSA_LIBRARY="$ALSA_LIB_ARM64" \
+    -DALSA_INCLUDE_DIR="$ALSA_INC_ARM64"
 
 cmake --build "$BUILD" -j "${JOBS:-4}"
 cmake --install "$BUILD"
@@ -93,9 +109,20 @@ else
     exit 1
 fi
 
-# ── Verifikation Window-Flag-Patch im Binary ─────────────────────────
-# Der Marker-Kommentar landet nicht im Binary, aber wir koennen
-# pruefen, ob die Funktion KMSDRM_CreateWindow SDL_WINDOW_OPENGL setzt
-# — indirekt ueber Symbole. Fallback: kein Hard-Fail.
+# ── Verifikation ALSA-Support im Binary ──────────────────────────────
+# Nach dem Build muss SDL_ALSA=ON gewesen sein. Das sehen wir an den
+# ALSA-Strings und den ALSA-Symbolen im Binary.
+ALSA_STRINGS=$(aarch64-linux-gnu-strings "$SDL2_LIB" | grep -c "snd_pcm_open" || true)
+ALSA_SYMS=$(aarch64-linux-gnu-nm -D --defined-only "$SDL2_LIB" 2>/dev/null | grep -c "snd_" || true)
+echo "== ALSA-Verifikation =="
+echo "  snd_pcm_open-Strings: $ALSA_STRINGS"
+echo "  snd_* Symbole:        $ALSA_SYMS"
+if [ "$ALSA_STRINGS" -gt 0 ] || [ "$ALSA_SYMS" -gt 0 ]; then
+    echo "OK: ALSA-Support im Binary."
+else
+    echo "WARNUNG: Keine ALSA-Strings/Symbole im Binary gefunden."
+    echo "  (Bei statischem Link sind die Symbole ggf. intern — kein Hard-Fail.)"
+fi
+
 echo "== Hinweis: Window-Flag-Patch ist im Quellcode verifiziert,"
 echo "   nicht im Binary. Das ist erwartet."
