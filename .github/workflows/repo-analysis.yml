@@ -1,0 +1,123 @@
+name: Repo Analysis for Optimization
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'scripts/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/repo-analysis.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Repo analysieren
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory "*" || true
+
+      - name: Analyse-Werkzeuge installieren
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            universal-ctags \
+            cloc \
+            tree \
+            ripgrep \
+            file
+
+      - name: Repo-Struktur zeigen
+        run: |
+          echo "== Root =="
+          ls -la
+          echo
+          echo "== git ls-files | wc -l =="
+          git ls-files | wc -l
+          echo
+          echo "== git status =="
+          git status --short || true
+
+      - name: Analyse-Skript ausführen
+        run: |
+          if [ ! -f scripts/analyze-repo.sh ]; then
+            echo "FEHLER: scripts/analyze-repo.sh fehlt im Repo."
+            exit 1
+          fi
+          bash scripts/analyze-repo.sh repo-analysis
+
+      - name: Sekundäranalyse (cloc, tree)
+        run: |
+          mkdir -p repo-analysis
+          if command -v cloc >/dev/null 2>&1; then
+            echo "== cloc ==" | tee repo-analysis/11-cloc.txt
+            cloc --quiet --exclude-dir=build,dist,sysroot,sdl2-install,.git . \
+              | tee -a repo-analysis/11-cloc.txt || true
+          fi
+          if command -v tree >/dev/null 2>&1; then
+            echo "== tree ==" | tee repo-analysis/12-tree.txt
+            tree -a -L 3 -I '.git|build|dist|sysroot|sdl2-install|node_modules' \
+              | tee -a repo-analysis/12-tree.txt || true
+          fi
+
+      - name: Tarball aller Analyse-Ausgaben
+        run: |
+          set -euo pipefail
+          cd repo-analysis
+          tar -czf ../repo-analysis.tar.gz .
+          cd ..
+          echo "== Größe des Analyse-Bundles =="
+          du -sh repo-analysis.tar.gz
+          echo
+          echo "== Inhalt =="
+          tar -tzf repo-analysis.tar.gz | head -40
+
+      - name: Upload repo-analysis.tar.gz
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-analysis
+          path: repo-analysis.tar.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload entpackte Einzeldateien (Fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-analysis-files
+          path: |
+            repo-analysis/*.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Zusammenfassung
+        if: always()
+        run: |
+          {
+            echo "## Repo-Analyse abgeschlossen"
+            echo
+            echo "- Commit: \`$(git rev-parse --short HEAD)\`"
+            echo "- Dateien: $(git ls-files | wc -l)"
+            echo "- Gesamt-LOC: $(git ls-files | xargs -r wc -l 2>/dev/null | tail -1 | awk '{print $1}')"
+            echo
+            echo "### Artefakte"
+            echo "- \`repo-analysis\`        — Vollständiges Bundle (Tarball)"
+            echo "- \`repo-analysis-files\`  — Einzelne Textdateien"
+          } >> "$GITHUB_STEP_SUMMARY"
