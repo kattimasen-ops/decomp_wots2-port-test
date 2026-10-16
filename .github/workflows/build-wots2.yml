@@ -29,7 +29,6 @@ jobs:
       PKG_CONFIG_PATH: ${{ github.workspace }}/sysroot/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig
       JOBS: "4"
       CHDMAN_VERSION: "0.288.1"
-      WOTS2_FX_SCALE: "0.4"
 
     steps:
       - name: Checkout
@@ -41,21 +40,13 @@ jobs:
       - name: Git Safe Directory
         run: git config --global --add safe.directory "*" || true
 
-      # ── REPO-STRUKTUR PRÜFEN ────────────────────────────────────────
       - name: Repo-Struktur prüfen
         run: |
-          echo "== Root =="
-          ls -la
-          echo "== patches/ =="
-          ls -la patches/ || echo "(kein patches/)"
-          echo "== scripts/ =="
-          ls -la scripts/ || echo "(kein scripts/)"
-          echo "== cmake/ =="
-          ls -la cmake/ || echo "(kein cmake/)"
-          echo "== include/native/ =="
-          ls -la include/native/ || echo "(kein include/native/)"
+          echo "== Root =="; ls -la
+          echo "== patches/ =="; ls -la patches/ || true
+          echo "== scripts/ =="; ls -la scripts/ || true
+          echo "== cmake/ =="; ls -la cmake/ || true
 
-      # ── MULTIARCH ───────────────────────────────────────────────────
       - name: aarch64 Multiarch aktivieren
         run: |
           dpkg --add-architecture arm64
@@ -68,7 +59,6 @@ jobs:
             > /etc/apt/sources.list.d/arm64.list
           apt-get update
 
-      # ── CMAKE 3.28.3 ────────────────────────────────────────────────
       - name: CMake 3.28.3 installieren
         run: |
           apt-get install -y --no-install-recommends wget ca-certificates
@@ -80,7 +70,6 @@ jobs:
           rm cmake-3.28.3-linux-x86_64.tar.gz
           cmake --version
 
-      # ── NATIVE TOOLS ────────────────────────────────────────────────
       - name: Native Build-Tools installieren
         run: |
           apt-get install -y --no-install-recommends \
@@ -89,39 +78,24 @@ jobs:
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             unzip p7zip-full libarchive-tools zstd xz-utils
 
-      # ── AARCH64 DEV-PAKETE ──────────────────────────────────────────
       - name: aarch64 Dev-Pakete installieren
         run: |
           apt-get install -y --no-install-recommends \
-            libdrm-dev:arm64 \
-            libgbm-dev:arm64 \
-            libegl-dev:arm64 \
-            libgles2-mesa-dev:arm64 \
-            libasound2-dev:arm64 \
-            libudev-dev:arm64 \
-            libarchive-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libbz2-dev:arm64 \
-            liblzma-dev:arm64 \
-            libzstd-dev:arm64 \
-            liblz4-dev:arm64 \
-            libwayland-dev:arm64 \
-            libpulse-dev:arm64 \
-            libxkbcommon-dev:arm64
+            libdrm-dev:arm64 libgbm-dev:arm64 libegl-dev:arm64 \
+            libgles2-mesa-dev:arm64 libasound2-dev:arm64 libudev-dev:arm64 \
+            libarchive-dev:arm64 zlib1g-dev:arm64 libbz2-dev:arm64 \
+            liblzma-dev:arm64 libzstd-dev:arm64 liblz4-dev:arm64 \
+            libwayland-dev:arm64 libpulse-dev:arm64 libxkbcommon-dev:arm64
 
-      # ── CROSS-SYSROOT ───────────────────────────────────────────────
       - name: Cross-Sysroot einrichten
         run: bash scripts/ci-setup-sysroot.sh
 
-      # ── SDL2 MIT KMSDRM-PATCHES + ALSA ──────────────────────────────
       - name: SDL2 mit KMSDRM-Patches und ALSA bauen
         run: bash scripts/ci-build-sdl2.sh
 
-      # ── STUBS (libmali, libdecor) ───────────────────────────────────
       - name: Stubs (libmali, libdecor)
         run: bash scripts/ci-build-stubs.sh
 
-      # ── CHD-EXTRACTOR (ARM64) ───────────────────────────────────────
       - name: CHD-Extractor (chdman arm64) herunterladen
         run: |
           set -euo pipefail
@@ -133,13 +107,7 @@ jobs:
             "https://unpkg.com/@emmercm/chdman-linux-arm64@${CHDMAN_VERSION}/LICENSE"
           chmod 755 chdman
           file chdman
-          ls -la
-          if command -v aarch64-linux-gnu-readelf >/dev/null 2>&1; then
-            echo "== readelf -d chdman =="
-            aarch64-linux-gnu-readelf -d chdman || true
-          fi
 
-      # ── PATCHES (Reihenfolge einhalten) ─────────────────────────────
       - name: Patches anwenden
         run: |
           set -euo pipefail
@@ -155,7 +123,7 @@ jobs:
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # ── gs.cpp: mediump-Qualifier (optional) ────────────────────
+          # ── gs.cpp: mediump-Qualifier ───────────────────────────────
           S=$(find_script wots2-gles-precision.py)
           if [ -n "$S" ]; then
             echo "== $S =="; python3 "$S" src/hal/gs.cpp
@@ -163,7 +131,7 @@ jobs:
             echo "  (wots2-gles-precision.py nicht gefunden — uebersprungen)"
           fi
 
-          # ── gs.cpp: NEON Vertex-Lerp + Frustum-Culling (v3) ─────────
+          # ── gs.cpp: NEON v3 (Culling-Fix) ───────────────────────────
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
@@ -175,98 +143,95 @@ jobs:
             echo "  (wots2-persistent-buffers.py nicht gefunden — uebersprungen)"
           fi
 
-          # ── gs.cpp: glInvalidateFramebuffer (Depth + Post-FBO) ──────
+          # ── gs.cpp: glInvalidateFramebuffer ─────────────────────────
           S=$(find_script wots2-gs-invalidate.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-invalidate.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: Shader-Cache + LRU-Unload (Halo-Effekt) ─────────
+          # ── gs.cpp: Shader-Cache v2 ─────────────────────────────────
           S=$(find_script wots2-gs-shader-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-shader-cache.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: 2D-Draw-Call-Batching (v3) ──────────────────────
+          # ── gs.cpp: 2D-Batching v3 ──────────────────────────────────
           S=$(find_script wots2-gs-batch-2d.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-batch-2d.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: glTexStorage2D fuer FBO-Texturen ────────────────
+          # ── gs.cpp: glTexStorage2D ──────────────────────────────────
           S=$(find_script wots2-gs-tex-storage.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-tex-storage.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: Boot-Splash (St0len-One-Tag) ────────────────────
-          S=$(find_script wots2-gs-splash.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-splash.py nicht gefunden — uebersprungen)"
+          # ── gs.cpp: SPLASH — ENTFERNT ──────────────────────────────
+          # Der Splash-Patch (wots2-gs-splash.py) wird NICHT mehr angewendet.
+          # Er war der letzte Zusatz vor dem schwarzen Bild. Sobald der
+          # Rest wieder laeuft, koennen wir ihn einzeln testen.
+          echo "  (wots2-gs-splash.py — bewusst uebersprungen)"
 
-          # ── gs.cpp: Diagnose init() + GL-Profil auf ES 3.2 ──────────
+          # ── gs.cpp: Diagnose init() + ES 3.2 ────────────────────────
           S=$(find_script wots2-gs-init-diag.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-init-diag.py nicht gefunden — uebersprungen)"
 
-          # ── gs.cpp: Punktlichter im Shader von 16 auf 8 ─────────────
+          # ── gs.cpp: Punktlichter von 16 auf 8 ───────────────────────
           S=$(find_script wots2-gs-combat.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-combat.py nicht gefunden — uebersprungen)"
 
-          # ── collision_world.cpp: NEON Apply + Towards + Distance ────
+          # ── gs.cpp: Perf-Trace ──────────────────────────────────────
+          S=$(find_script wots2-gs-perf-trace.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-perf-trace.py nicht gefunden — uebersprungen)"
+
+          # ── Kollision ───────────────────────────────────────────────
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
 
-          # ── collision_world.cpp: NEON Relative() ────────────────────
           S=$(find_script wots2-collision-relative-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; } \
                     || echo "  (wots2-collision-relative-neon.py nicht gefunden — uebersprungen)"
 
-          # ── chara_resources.cpp: Cache fuer die heissesten Suchen ───
+          # ── Caches ──────────────────────────────────────────────────
           S=$(find_script wots2-chara-resources-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_resources.cpp; } \
                     || echo "  (wots2-chara-resources-cache.py nicht gefunden — uebersprungen)"
 
-          # ── chara_mgr.cpp: Cache fuer CharaMgr_Find ─────────────────
           S=$(find_script wots2-chara-mgr-find-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_mgr.cpp; } \
                     || echo "  (wots2-chara-mgr-find-cache.py nicht gefunden — uebersprungen)"
 
-          # ── chara_body.cpp: Last-Array statt std::map ───────────────
           S=$(find_script wots2-chara-body-last-array.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_body.cpp; } \
                     || echo "  (wots2-chara-body-last-array.py nicht gefunden — uebersprungen)"
 
-          # ── map_collision.cpp: Cell-Cache ───────────────────────────
           S=$(find_script wots2-map-collision-cell-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; } \
                     || echo "  (wots2-map-collision-cell-cache.py nicht gefunden — uebersprungen)"
 
-          # ── world_effects.cpp: FX-Anzahl skalieren ──────────────────
           S=$(find_script wots2-fx-scale.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
                     || echo "  (wots2-fx-scale.py nicht gefunden — uebersprungen)"
 
-          # ── motion.cpp: NEON fuer Vektor-Operationen ────────────────
+          # ── motion.cpp NEON ─────────────────────────────────────────
           S=$(find_script wots2-motion-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
                     || echo "  (wots2-motion-neon.py nicht gefunden — uebersprungen)"
 
-          # ── SDL2 KMSDRM Pageflip-Patch (Install-Tree, Nachlauf) ─────
-          # Hinweis: Der Pageflip- und der Window-Flag-Patch laufen bereits
-          # in scripts/ci-build-sdl2.sh gegen den Quellbaum. Der hier ist
-          # der alte Nachlauf gegen den Install-Tree, idempotent, harmlos.
+          # ── SDL2 Pageflip-Nachlauf ──────────────────────────────────
           S=$(find_script sdl2-pageflip.py)
           if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
-            echo "== $S (SDL2-Install-Tree, Nachlauf) =="
+            echo "== $S (Install-Tree, Nachlauf) =="
             python3 "$S" "$SDL2_INSTALL/.." || true
           fi
 
-          # ── Default-Werte in port_options.h (Recommended-Preset) ────
+          # ── port_options.h Defaults ─────────────────────────────────
           S=$(find_script patch_config_defaults.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (patch_config_defaults.py nicht gefunden — uebersprungen)"
 
           echo "== Patches fertig =="
 
-      # ── CMake konfigurieren ─────────────────────────────────────────
       - name: CMake konfigurieren
         run: |
           cmake -S . -B build -G Ninja \
@@ -278,73 +243,43 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_SHARED_LIBS=OFF
 
-      # ── BAUEN ───────────────────────────────────────────────────────
       - name: Bauen
         run: cmake --build build -j "$JOBS"
 
-      # ── BINARY-ABHÄNGIGKEITEN PROTOKOLLIEREN ────────────────────────
       - name: Binary-Abhängigkeiten protokollieren
         run: |
           set -euo pipefail
-          echo "== readelf -d build/wots2 | NEEDED =="
+          echo "== readelf -d =="
           aarch64-linux-gnu-readelf -d build/wots2 | grep -E 'NEEDED|SONAME' || true
-          echo
-          echo "== Dynamischer Interpreter =="
           aarch64-linux-gnu-readelf -l build/wots2 | grep -i interpreter || true
-          echo
-          echo "== Dateigröße / Typ =="
           ls -la build/wots2
           file build/wots2
-          echo
-          echo "== Erwartet: nur libc.so.6, libm.so.6, evtl. libEGL / libGLESv2 =="
-          echo "== libstdc++ / libgcc_s dürfen NICHT mehr auftauchen =="
 
-      # ── STAGING ─────────────────────────────────────────────────────
       - name: Bundle vorbereiten
         run: |
           set -euo pipefail
           STAGE="$GITHUB_WORKSPACE/dist"
           rm -rf "$STAGE"
-          mkdir -p "$STAGE/wots2/libs.aarch64" \
-                   "$STAGE/wots2/extracted" \
-                   "$STAGE/wots2/shader_cache"
-
-          install -m 755 build/wots2        "$STAGE/wots2/wots2"
+          mkdir -p "$STAGE/wots2/libs.aarch64" "$STAGE/wots2/extracted" "$STAGE/wots2/shader_cache"
+          install -m 755 build/wots2 "$STAGE/wots2/wots2"
           [ -f port.ini ] && install -m 644 port.ini "$STAGE/wots2/port.ini" || true
-
-          [ -f WOTS2.sh ]       && install -m 755 WOTS2.sh       "$STAGE/WOTS2.sh"       || true
+          [ -f WOTS2.sh ] && install -m 755 WOTS2.sh "$STAGE/WOTS2.sh" || true
           [ -f sdl_mapping.py ] && install -m 755 sdl_mapping.py "$STAGE/wots2/sdl_mapping.py" || true
-
           [ -f README.md ] && install -m 644 README.md "$STAGE/README.md" || true
 
-          # ── chdman (ARM64) ins Bundle ────────────────────────────────
           CHD_DIR="$GITHUB_WORKSPACE/chdman-arm64"
-          if [ -f "$CHD_DIR/chdman" ]; then
-            install -m 755 "$CHD_DIR/chdman" "$STAGE/wots2/chdman"
-            echo "chdman installiert: $(stat -c%s "$STAGE/wots2/chdman") Bytes"
-          else
-            echo "WARNUNG: chdman nicht gefunden — CHD-Support fehlt."
-          fi
-          if [ -f "$CHD_DIR/LICENSE-chdman.txt" ]; then
-            install -m 644 "$CHD_DIR/LICENSE-chdman.txt" \
-                          "$STAGE/wots2/LICENSE-chdman.txt"
-          fi
+          [ -f "$CHD_DIR/chdman" ] && install -m 755 "$CHD_DIR/chdman" "$STAGE/wots2/chdman"
+          [ -f "$CHD_DIR/LICENSE-chdman.txt" ] && install -m 644 "$CHD_DIR/LICENSE-chdman.txt" "$STAGE/wots2/LICENSE-chdman.txt"
 
-          # ── WOTS2-eigene libs aus dem Build (falls vorhanden) ────────
           for lib in build/libs.aarch64/*.so*; do
             [ -e "$lib" ] && cp -a "$lib" "$STAGE/wots2/libs.aarch64/" || true
           done
 
-          # ── Gepatchte SDL2 ins Bundle ────────────────────────────────
           if [ -d "$SDL2_INSTALL/lib" ]; then
             for f in "$SDL2_INSTALL/lib"/libSDL2-2.0.so*; do
               [ -e "$f" ] || continue
               cp -a "$f" "$STAGE/wots2/libs.aarch64/"
             done
-            echo "== libs.aarch64 mit SDL2 =="
-            ls -la "$STAGE/wots2/libs.aarch64/"
-          else
-            echo "WARNUNG: $SDL2_INSTALL/lib fehlt — SDL2 nicht im Bundle."
           fi
 
           find "$STAGE" -type d -exec chmod 755 {} \;
@@ -353,25 +288,19 @@ jobs:
           [ -f "$STAGE/wots2/sdl_mapping.py" ] && chmod 755 "$STAGE/wots2/sdl_mapping.py" || true
           [ -f "$STAGE/wots2/chdman" ] && chmod 755 "$STAGE/wots2/chdman" || true
 
-          touch "$STAGE/wots2/extracted/.gitkeep" \
-                "$STAGE/wots2/shader_cache/.gitkeep"
-
-          echo "== dist =="
+          touch "$STAGE/wots2/extracted/.gitkeep" "$STAGE/wots2/shader_cache/.gitkeep"
           find "$STAGE" -maxdepth 3 -printf '  %M %8s  %p\n'
 
-      # ── TARBALL ─────────────────────────────────────────────────────
       - name: Tarball erzeugen
         run: |
           set -euo pipefail
           cd dist
-          tar -czf wots2-rk3326.tar.gz \
-              wots2 WOTS2.sh README.md 2>/dev/null \
-            || tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh
+          tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh README.md 2>/dev/null || \
+            tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh
           echo "== tar =="
-          tar -tzf wots2-rk3326.tar.gz | head -60
+          tar -tzf wots2-rk3326.tar.gz | head -40
           ls -la
 
-      # ── ARTEFAKT ────────────────────────────────────────────────────
       - name: Upload Artefakt (Bundle)
         uses: actions/upload-artifact@v4
         with:
@@ -384,7 +313,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # ── FEHLERANALYSE (immer) ───────────────────────────────────────
       - name: Fehleranalyse
         if: always()
         run: bash scripts/ci-error-report.sh || true
