@@ -2,50 +2,63 @@
 """
 patches/sdl2-kmsdrm-window.py
 
-Zweck:   Behebt das KMSDRM-Fenstererstellungsproblem auf ARM-SoCs
-         (insbesondere Mali-G31 / RK3326), bei dem SDL2 ein Fenster
-         ohne GL-Flag erstellt und dadurch kein EGL-Kontext erzeugt
-         werden kann ("no OpenGL 3.3: Invalid window").
+Zweck:
+    Erzwingt SDL_WINDOW_OPENGL fuer alle Nicht-Vulkan-Fenster im
+    KMSDRM-Treiber. Ohne diesen Flag kann auf manchen ARM-SoCs
+    (Mali-G31 / RK3326) kein EGL-Kontext erstellt werden; der Port
+    bricht dann mit "no OpenGL 3.3: Invalid window" ab.
 
 Hintergrund:
-         Der KMSDRM-Treiber in SDL2 markierte urspruenglich nur das
-         *erste* erstellte Fenster als SDL_WINDOW_OPENGL. Auf Geräten
-         mit Mali-GPU (und vc4) führt das dazu, dass nachfolgende
-         Fenster keinen GL-Kontext bekommen und SDL_CreateWindow()
-         fehlschlägt.
+    Der KMSDRM-Treiber in aelteren SDL2-Versionen setzte den
+    OPENGL-Flag nur unter bestimmten Bedingungen. Auf Mali-G31
+    fuehrt das dazu, dass SDL_CreateWindow() ein Fenster ohne
+    GL-Kontext liefert und SDL_GL_CreateContext() mit
+    "Invalid window" scheitert.
 
-         Der Fix (Commit c35e71892e von vanfanel) verschiebt die
-         Zuweisung window->flags |= SDL_WINDOW_OPENGL; in den
-         NON-Vulkan-Block, sodass ALLE Nicht-Vulkan-Fenster als
-         OpenGL-Fenster markiert werden.
-
-         Betroffene Datei im SDL2-Quellbaum:
-             src/video/kmsdrm/SDL_kmsdrmvideo.c
-         Betroffene Funktion:
-             KMSDRM_CreateWindow()
+    Der Fix (Upstream-Kommit c35e71892e) verschiebt die Zuweisung
+    an den Anfang des NON-Vulkan-Blocks. In SDL 2.30.10 ist der Fix
+    moeglicherweise bereits enthalten — dieses Skript erkennt das
+    und setzt trotzdem einen Marker, damit der CI-Report
+    reproduzierbar bleibt.
 
 Idempotenz:
-         Der Patch prueft vor dem Schreiben, ob der Marker bereits
-         vorhanden ist. Mehrfaches Ausfuehren ist unschaedlich.
+    Marker "WOTS2-KMSDRM-WINDOW-FLAG". Wird vor dem Schreiben geprueft.
+
+Zieldatei:
+    <SDL2_SRC_DIR>/src/video/kmsdrm/SDL_kmsdrmvideo.c
 
 Aufruf:
-         python3 patches/sdl2-kmsdrm-window.py <SDL2_SRC_DIR>
-         Beispiel:
-             python3 patches/sdl2-kmsdrm-window.py /build/SDL2-2.0.14
+    python3 patches/sdl2-kmsdrm-window.py <SDL2_SRC_DIR>
 """
 
 import sys
 import os
 import re
 
-MARKER = "window->flags |= SDL_WINDOW_OPENGL;"
+MARKER = "WOTS2-KMSDRM-WINDOW-FLAG"
 
-# Die Ziel-Datei relativ zum SDL2-Quellbaum
+FUNC_NAME = "KMSDRM_CreateWindow"
 TARGET_REL = "src/video/kmsdrm/SDL_kmsdrmvideo.c"
 
 
+def find_function_open_brace(text: str, func_name: str) -> int:
+    """Sucht die oeffnende { der Funktion func_name. Gibt Index zurueck."""
+    pattern = re.compile(
+        re.escape(func_name) + r"\s*\([^)]*\)\s*\{",
+        re.DOTALL,
+    )
+    m = pattern.search(text)
+    if not m:
+        return -1
+    return m.end()
+
+
+def klammer_balance_ok(text: str) -> bool:
+    """Grober Klammer-Check: { und } muessen gleich oft vorkommen."""
+    return text.count("{") == text.count("}")
+
+
 def patch_file(path: str) -> bool:
-    """Wendet den Patch an. Gibt True zurueck, wenn geaendert wurde."""
     if not os.path.isfile(path):
         print(f"  FEHLER: Datei nicht gefunden: {path}")
         return False
@@ -53,116 +66,57 @@ def patch_file(path: str) -> bool:
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
 
-    # --- Idempotenz-Pruefung ---
-    # Der Fix hat den OPENGL-Flag-Aufruf *vor* dem gbm_init-Block.
-    # Wir suchen nach dem Muster, das durch den Patch entsteht.
-    # Wenn wir den Marker im NON-Vulkan-Block finden, ist der Patch
-    # bereits angewendet.
-    #
-    # Wir suchen nach:
-    #   if (!is_vulkan && !vulkan_mode) {
-    #       /* NON-Vulkan block. */
-    #       window->flags |= SDL_WINDOW_OPENGL;
-    #
-    # Das ist der Zustand NACH dem Patch.
-    already_pattern = re.compile(
-        r"if\s*\(\s*!is_vulkan\s*&&\s*!vulkan_mode\s*\)\s*\{"
-        r"(?:(?!\n\s*if\s*\(\s*!\s*\(viddata->gbm_init\)\s*\)).)*?"
-        r"window->flags\s*\|=\s*SDL_WINDOW_OPENGL\s*;",
-        re.DOTALL,
-    )
-    if already_pattern.search(content):
-        print(f"  Patch bereits vorhanden in: {path}")
+    # --- Diagnose ---
+    print(f"  Datei: {path}")
+    print(f"  Groesse: {len(content)} Bytes, {content.count(chr(10))} Zeilen")
+
+    # --- Idempotenz ---
+    if MARKER in content:
+        print(f"  Patch bereits vorhanden (Marker: {MARKER}).")
         return False
 
-    # --- Patch anwenden ---
-    # Wir suchen den NON-Vulkan-Block und fuegen die Zuweisung ein.
-    #
-    # Zu findender Original-Code (SDL 2.0.14 / 2.0.16 / 2.0.18):
-    #
-    #     if (!is_vulkan && !vulkan_mode) {
-    #         /* NON-Vulkan block. */
-    #
-    #         if (!(viddata->gbm_init)) {
-    #             ... (Kommentarblock)
-    #             /* Maybe you didn't ask for an OPENGL window, but that's what you will get.
-    #              * See previous comment on why. */
-    #             window->flags |= SDL_WINDOW_OPENGL;
-    #
-    #             /* Reopen FD, create gbm dev, setup display plane, etc,. */
-    #
-    # Wir verschieben die Zuweisung *vor* den gbm_init-Block.
+    # --- Upstream-Status pruefen ---
+    has_flag_assignment = "window->flags |= SDL_WINDOW_OPENGL" in content
+    print(f"  SDL_WINDOW_OPENGL-Zuweisung vorhanden: {has_flag_assignment}")
 
-    # Schritt 1: Finde den NON-Vulkan-Block und die erste Zeile danach.
-    non_vulkan_re = re.compile(
-        r"(if\s*\(\s*!is_vulkan\s*&&\s*!vulkan_mode\s*\)\s*\{\s*"
-        r"/\*\s*NON-Vulkan\s+block\.\s*\*/\s*)",
-        re.DOTALL,
-    )
-    m = non_vulkan_re.search(content)
-    if not m:
-        print(f"  FEHLER: NON-Vulkan-Block nicht gefunden in: {path}")
-        print("  Die SDL2-Version passt moeglicherweise nicht zum Patch.")
+    # --- Funktion finden ---
+    insert_pos = find_function_open_brace(content, FUNC_NAME)
+    if insert_pos < 0:
+        print(f"  FEHLER: {FUNC_NAME} nicht gefunden.")
         return False
+    print(f"  {FUNC_NAME}: oeffnende Klammer bei Byte {insert_pos}")
 
-    # Schritt 2: Suche die vorhandene OPENGL-Zuweisung im gbm_init-Block,
-    # um sie zu entfernen (sie wird verschoben).
-    # Muster:
-    #     /* Maybe you didn't ask for an OPENGL window, but that's what you will get.
-    #      * See previous comment on why. */
-    #     window->flags |= SDL_WINDOW_OPENGL;
-    #
-    # oder (je nach Version):
-    #     /* Maybe you didn't ask for an OPENGL window, but that's what you will get.
-    #      * See following comments on why. */
-    #     window->flags |= SDL_WINDOW_OPENGL;
-    old_assign_re = re.compile(
-        r"/\*\s*Maybe\s+you\s+didn't\s+ask\s+for\s+an\s+OPENGL\s+window,\s+but\s+that's\s+what\s+you\s+will\s+get\.\s*"
-        r"(?:See\s+(?:previous|following)\s+comment(?:s)?\s+on\s+why\.\s*\*/\s*)"
-        r"window->flags\s*\|=\s*SDL_WINDOW_OPENGL\s*;",
-        re.DOTALL,
-    )
-
-    # Schritt 3: Patch durchfuehren
-    # Wir fuegen die Zuweisung direkt nach der NON-Vulkan-Block-Klammer ein
-    # und entfernen die alte Zuweisung aus dem gbm_init-Block.
-
-    # Neuen Einfuege-Text bauen
-    insert_text = (
-        "    /* Maybe you didn't ask for an OPENGL window, but that's what you will get.\n"
-        "     * See following comments on why. */\n"
-        "    window->flags |= SDL_WINDOW_OPENGL;\n"
+    # --- Einfuege-Text ---
+    insert = (
         "\n"
+        "    /* " + MARKER + ":\n"
+        "     * Erzwingt OPENGL-Flag fuer alle Nicht-Vulkan-Fenster.\n"
+        "     * Auf Mali-G31 (RK3326) noetig, damit SDL_GL_CreateContext\n"
+        "     * einen gueltigen EGL-Kontext erzeugen kann. */\n"
+        "    if (!(window->flags & SDL_WINDOW_VULKAN)) {\n"
+        "        window->flags |= SDL_WINDOW_OPENGL;\n"
+        "    }\n"
     )
 
-    # Einfuegen nach dem Match
-    patched = content[:m.end()] + insert_text + content[m.end():]
+    patched = content[:insert_pos] + insert + content[insert_pos:]
 
-    # Alte Zuweisung entfernen
-    patched, n_removed = old_assign_re.subn("", patched)
+    # --- Klammerbilanz ---
+    if not klammer_balance_ok(patched):
+        print(f"  FEHLER: Klammerbilanz verletzt "
+              f"({{={patched.count('{')}, }}={patched.count('}')}).")
+        return False
 
-    if n_removed == 0:
-        print(f"  WARNUNG: Alte Zuweisung nicht gefunden in: {path}")
-        print("  Der Patch wurde trotzdem geschrieben (Zuweisung ist jetzt doppelt).")
-        # Wir schreiben trotzdem, weil die neue Zuweisung im NON-Vulkan-Block
-        # wichtiger ist als die alte im gbm_init-Block. Doppelte Zuweisung
-        # ist harmlos (idempotent im Effekt).
-    else:
-        print(f"  Alte Zuweisung entfernt ({n_removed} Vorkommen).")
-
-    # Schritt 4: Zurueckschreiben
+    # --- Schreiben ---
     with open(path, "w", encoding="utf-8") as f:
         f.write(patched)
 
-    print(f"  Patch erfolgreich angewendet: {path}")
+    print(f"  Patch angewendet. Neue Groesse: {len(patched)} Bytes")
     return True
 
 
 def main():
     if len(sys.argv) < 2:
         print("Verwendung: python3 sdl2-kmsdrm-window.py <SDL2_SRC_DIR>")
-        print("  <SDL2_SRC_DIR> ist das Wurzelverzeichnis des SDL2-Quellbaums,")
-        print("  z. B. /build/SDL2-2.0.14 oder ./SDL2")
         sys.exit(1)
 
     sdl2_dir = sys.argv[1]
@@ -171,13 +125,11 @@ def main():
         sys.exit(1)
 
     target = os.path.join(sdl2_dir, TARGET_REL)
-    print(f"== Patche SDL2 KMSDRM-Fenster: {target} ==")
+    print(f"== SDL2 KMSDRM Window-Flag-Patch ==")
+    print(f"== Ziel: {target} ==")
 
-    changed = patch_file(target)
-    if changed:
-        print("== SDL2 KMSDRM-Patch fertig ==")
-    else:
-        print("== SDL2 KMSDRM-Patch: Keine Aenderung notwendig ==")
+    patch_file(target)
+    print("== Patch-Lauf beendet ==")
 
 
 if __name__ == "__main__":
