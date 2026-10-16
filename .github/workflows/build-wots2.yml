@@ -112,31 +112,9 @@ jobs:
       - name: Cross-Sysroot einrichten
         run: bash scripts/ci-setup-sysroot.sh
 
-      # ── SDL2 MIT KMSDRM-PAGEFLIP-PATCH ──────────────────────────────
-      - name: SDL2 mit KMSDRM-Pageflip-Patch bauen
+      # ── SDL2 MIT KMSDRM-PATCHES (PAGEFLIP + WINDOW-FLAG) ────────────
+      - name: SDL2 mit KMSDRM-Patches bauen
         run: bash scripts/ci-build-sdl2.sh
-
-      # ── SDL2 KMSDRM WINDOW-FLAG-PATCH (NEU) ─────────────────────────
-      - name: SDL2 KMSDRM Window-Flag-Patch anwenden
-        run: |
-          set -euo pipefail
-          # Der Patch wird gegen den SDL2-Quellbaum angewendet.
-          # scripts/ci-build-sdl2.sh muss das Quellverzeichnis
-          # als $SDL2_SRC_DIR exportieren oder an bekannter Stelle
-          # ablegen. Wenn nicht, bitte den Pfad hier anpassen.
-          SDL2_SRC="${SDL2_SRC_DIR:-$GITHUB_WORKSPACE/SDL2}"
-          if [ ! -d "$SDL2_SRC" ]; then
-            echo "WARNUNG: SDL2-Quellverzeichnis nicht gefunden: $SDL2_SRC"
-            echo "  Suche nach SDL2-Ordnern..."
-            SDL2_SRC=$(find "$GITHUB_WORKSPACE" -maxdepth 2 -type d -name "SDL2*" | head -1)
-            if [ -z "$SDL2_SRC" ]; then
-              echo "FEHLER: Kein SDL2-Quellverzeichnis gefunden."
-              echo "  Bitte SDL2_SRC_DIR in scripts/ci-build-sdl2.sh exportieren."
-              exit 1
-            fi
-          fi
-          echo "== SDL2-Quellverzeichnis: $SDL2_SRC =="
-          python3 patches/sdl2-kmsdrm-window.py "$SDL2_SRC"
 
       # ── STUBS (libmali, libdecor) ───────────────────────────────────
       - name: Stubs (libmali, libdecor)
@@ -256,9 +234,13 @@ jobs:
                     || echo "  (wots2-fx-scale.py nicht gefunden — uebersprungen)"
 
           # ── SDL2 KMSDRM Pageflip-Patch ──────────────────────────────
+          # Hinweis: Der Pageflip-Patch UND der Window-Flag-Patch laufen
+          # bereits in scripts/ci-build-sdl2.sh gegen den Quellbaum.
+          # Der hier ist der alte Nachlauf gegen den Install-Tree und
+          # ist harmlos, weil idempotent.
           S=$(find_script sdl2-pageflip.py)
           if [ -n "$S" ] && [ -d "$SDL2_INSTALL" ]; then
-            echo "== $S (SDL2-Tree) =="
+            echo "== $S (SDL2-Install-Tree, Nachlauf) =="
             python3 "$S" "$SDL2_INSTALL/.." || true
           fi
 
