@@ -319,9 +319,26 @@ jobs:
                           "$STAGE/wots2/LICENSE-chdman.txt"
           fi
 
+          # ── WOTS2-eigene libs aus dem Build (falls vorhanden) ────────
           for lib in build/libs.aarch64/*.so*; do
             [ -e "$lib" ] && cp -a "$lib" "$STAGE/wots2/libs.aarch64/" || true
           done
+
+          # ── Gepatchte SDL2 ins Bundle (NEU) ──────────────────────────
+          # Ohne diese Kopie laedt die Binary auf dem Geraet die
+          # System-SDL2 von ArkOS — die hat den KMSDRM-Pageflip-Patch
+          # NICHT und ist in manchen Versionen zu alt fuer den
+          # Window-Flag-Fix. Ergebnis auf dem M9: "Invalid window".
+          if [ -d "$SDL2_INSTALL/lib" ]; then
+            for f in "$SDL2_INSTALL/lib"/libSDL2-2.0.so*; do
+              [ -e "$f" ] || continue
+              cp -a "$f" "$STAGE/wots2/libs.aarch64/"
+            done
+            echo "== libs.aarch64 mit SDL2 =="
+            ls -la "$STAGE/wots2/libs.aarch64/"
+          else
+            echo "WARNUNG: $SDL2_INSTALL/lib fehlt — SDL2 nicht im Bundle."
+          fi
 
           find "$STAGE" -type d -exec chmod 755 {} \;
           find "$STAGE" -type f -exec chmod 644 {} \;
@@ -330,8 +347,7 @@ jobs:
           [ -f "$STAGE/wots2/chdman" ] && chmod 755 "$STAGE/wots2/chdman" || true
 
           touch "$STAGE/wots2/extracted/.gitkeep" \
-                "$STAGE/wots2/shader_cache/.gitkeep" \
-                "$STAGE/wots2/libs.aarch64/.gitkeep"
+                "$STAGE/wots2/shader_cache/.gitkeep"
 
           echo "== dist =="
           find "$STAGE" -maxdepth 3 -printf '  %M %8s  %p\n'
