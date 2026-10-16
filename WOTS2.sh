@@ -6,15 +6,15 @@
 #
 # Killswitch:
 #   gptokeyb wird mit "-k wots2" gestartet. Der Standard-Hotkey
-#   (Select+Start) beendet wots2 sauber. Wenn wots2 auf SIGTERM
-#   nicht reagiert, eskaliert der Launcher nach 3 Sekunden auf SIGKILL.
+#   (Select+Start) beendet wots2 sauber.
 #
 # Steuerung:
 #   WOTS2_LIBDIAG=0/1              LD_DEBUG-Probe (Default: 1)
 #   WOTS2_FX_SCALE=N               Effekt-Anzahl (Default: 0.4)
 #   WOTS2_NO_CULL=0/1              Frustum-Culling aus (Default: 0)
 #   WOTS2_NO_BATCH=0/1             2D-Batching aus (Default: 0)
-#   WOTS2_PERSISTENT_BUFFERS=0/1   glBufferSubData statt glBufferData (Default: 0)
+#   WOTS2_PERSISTENT_BUFFERS=0/1   AUS LASSEN (Default: 0)
+#   WOTS2_PAD_DIAG=0/1             Stick-Diagnose (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
 #   WOTS2_SHADER_LRU=N             Frames bis Shader-Unload (Default: 120)
 #   WOTS2_SPLASH=N                 Splash-Dauer in Sekunden (Default: 2.5)
@@ -137,18 +137,14 @@ if [ -n "$PM_CONTROLFOLDER" ] && [ -f "$PM_CONTROLFOLDER/control.txt" ]; then
     log "PortMaster control.txt geladen aus $PM_CONTROLFOLDER"
 fi
 
-# ── SDL-GAMECONTROLLER + VOLL-DIAGNOSE ───────────────────────────────
+# ── SDL-GAMECONTROLLER + DIAGNOSE-DUMP ───────────────────────────────
 SDL_DIAG="$GAMEDIR/sdl_diag.txt"
 : > "$SDL_DIAG"
 {
     echo "=== WOTS2 SDL-Diagnose $(date) ==="
-    echo "--- /proc/bus/input/devices (volle Sektionen, mindestens 60 Zeilen) ---"
+    echo "--- /proc/bus/input/devices ---"
     if [ -f /proc/bus/input/devices ]; then
-        awk '
-            /^I: Bus=/ || /^N: Name=/ || /^P: Phys=/ || /^S: Sysfs=/ || /^U: Uniq=/ || /^H: Handlers=/ || /^B: / { print }
-        ' /proc/bus/input/devices
-    else
-        echo "(nicht lesbar)"
+        grep -E '^(I|N|P|S|U|H):' /proc/bus/input/devices || true
     fi
     echo "--- es_input.cfg Kandidaten ---"
     for f in /userdata/system/configs/emulationstation/es_input.cfg \
@@ -159,7 +155,6 @@ SDL_DIAG="$GAMEDIR/sdl_diag.txt"
             echo "### /$f"
         fi
     done
-    echo "--- Hinweis: keine es_input.cfg heisst, sdl_mapping.py gibt nichts aus ---"
 } >> "$SDL_DIAG" 2>&1
 
 if [ -n "${sdl_controllerconfig:-}" ]; then
@@ -171,20 +166,14 @@ elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
         export SDL_GAMECONTROLLERCONFIG="$SDL_MAP"
         log "SDL_GAMECONTROLLERCONFIG aus sdl_mapping.py gesetzt."
     else
-        log "sdl_mapping.py hat nichts ausgegeben — SDL faellt auf die interne Datenbank zurueck."
+        log "sdl_mapping.py hat nichts ausgegeben — SDL benutzt die interne Datenbank."
     fi
-    {
-        echo "--- sdl_mapping.py stdout ---"
-        echo "${SDL_MAP:-（leer）}"
-    } >> "$SDL_DIAG" 2>&1
 fi
 
 if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
     export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/wots2-gamecontrollerdb.txt"
     printf '%s\n' "$SDL_GAMECONTROLLERCONFIG" > "$SDL_GAMECONTROLLERCONFIG_FILE" 2>/dev/null || true
     log "SDL_GAMECONTROLLERCONFIG_FILE gesetzt: $SDL_GAMECONTROLLERCONFIG_FILE"
-else
-    log "Keine SDL_GAMECONTROLLERCONFIG — SDL benutzt die interne Datenbank."
 fi
 
 # ── SYSTEMOPTIMIERUNG ────────────────────────────────────────────────
@@ -201,8 +190,6 @@ if [ -n "$cpu_governor_path" ]; then
     cpu_saved=$(cat "$cpu_governor_path" 2>/dev/null)
     log "CPU-Governor: $cpu_saved -> performance"
     echo performance > "$cpu_governor_path" 2>/dev/null || true
-else
-    log "CPU-Governor: kein Pfad gefunden"
 fi
 for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
     [ -w "$cpu/cpufreq/scaling_governor" ] && \
@@ -224,8 +211,6 @@ if [ -n "$gpu_devfreq_path" ]; then
         max_freq=$(tr ' ' '\n' < "$gpu_devfreq_path/available_frequencies" | sort -n | tail -n 1)
         [ -n "$max_freq" ] && echo "$max_freq" > "$gpu_devfreq_path/min_freq" 2>/dev/null || true
     fi
-else
-    log "GPU-Governor: kein Devfreq-Pfad gefunden"
 fi
 
 if ! swapon --show 2>/dev/null | grep -q zram; then
@@ -389,9 +374,11 @@ export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
 
-# Persistent buffers: zurueckgesetzt auf 0, weil der Verdacht besteht,
-# dass die glMapBufferRange-Variante den weissen Bildschirm verursacht.
+# Persistent buffers: NIEMALS auf 1 setzen. Der Patch liefert auf Mali-G31
+# undefinierte Vertex-Daten und macht das Bild schwarz/weiss.
 export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-0}"
+
+export WOTS2_PAD_DIAG="${WOTS2_PAD_DIAG:-0}"
 
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.4}"
@@ -422,6 +409,7 @@ log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
 log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
 log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
 log "  WOTS2_PERSISTENT_BUFFERS=$WOTS2_PERSISTENT_BUFFERS"
+log "  WOTS2_PAD_DIAG=$WOTS2_PAD_DIAG"
 log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  WOTS2_PERF_TRACE=$WOTS2_PERF_TRACE"
@@ -431,13 +419,6 @@ log ""
 log "Bundle-Bibliotheken (libs.aarch64):"
 if [ -d "$GAMEDIR/libs.aarch64" ]; then
     ls -la "$GAMEDIR/libs.aarch64" 2>&1 | log_pipe
-    if [ -e "$GAMEDIR/libs.aarch64/libSDL2-2.0.so.0" ]; then
-        log "  OK: libSDL2-2.0.so.0 im Bundle — System-SDL2 wird umgangen."
-    else
-        log "  WARNUNG: libSDL2-2.0.so.0 fehlt in libs.aarch64!"
-    fi
-else
-    log "  (libs.aarch64 fehlt komplett)"
 fi
 
 log ""
@@ -459,54 +440,26 @@ else
 fi
 
 log ""
-log "SDL-Diagnose-Dump:"
-if [ -f "$SDL_DIAG" ]; then
-    log "  $SDL_DIAG geschrieben ($(wc -l < "$SDL_DIAG") Zeilen)"
-else
-    log "  (nicht geschrieben)"
-fi
+log "SDL-Diagnose-Dump: $SDL_DIAG ($(wc -l < "$SDL_DIAG" 2>/dev/null || echo 0) Zeilen)"
 
 LIBDIAG_LOG="$GAMEDIR/wots2-libdiag.txt"
 if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
     log ""
     log "WOTS2_LIBDIAG=1: LD_DEBUG=libs Probe (max 5 Sekunden) ..."
     : > "$LIBDIAG_LOG"
-
     PROBE_OK=0
     if command -v timeout >/dev/null 2>&1; then
         ( LD_DEBUG=libs timeout 5 ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" || PROBE_OK=1
-    else
-        ( LD_DEBUG=libs ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" &
-        DIAG_PID=$!
-        ( sleep 5 && kill -TERM "$DIAG_PID" 2>/dev/null ) &
-        KILLER_PID=$!
-        wait "$DIAG_PID" 2>/dev/null || PROBE_OK=1
-        kill -TERM "$KILLER_PID" 2>/dev/null || true
-        wait "$KILLER_PID" 2>/dev/null || true
     fi
-
     if [ -s "$LIBDIAG_LOG" ]; then
         head -200 "$LIBDIAG_LOG" > "$LIBDIAG_LOG.head"
         mv -f "$LIBDIAG_LOG.head" "$LIBDIAG_LOG"
-        LINES=$(wc -l < "$LIBDIAG_LOG")
-        log "  $LIBDIAG_LOG geschrieben ($LINES Zeilen)"
-        log "  Erste 20 Zeilen:"
-        head -20 "$LIBDIAG_LOG" | log_pipe
-    else
-        log "  WARNUNG: LD_DEBUG hat nichts geschrieben."
+        log "  $LIBDIAG_LOG geschrieben ($(wc -l < "$LIBDIAG_LOG") Zeilen)"
     fi
-
-    if [ "$PROBE_OK" = "1" ]; then
-        log "  Hinweis: Der Probe-Lauf endete nicht regulaer —"
-        log "  das Spiel ist entweder abgestuerzt oder braucht mehr als 5 Sekunden."
-    fi
-else
-    log ""
-    log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG (Probe uebersprungen)."
 fi
 
 # ══════════════════════════════════════════════════════════════════════
-# HELFER: Entpacker wählen
+# HELFER
 # ══════════════════════════════════════════════════════════════════════
 pick_extractor() {
     if command -v bsdtar >/dev/null 2>&1; then echo "bsdtar"
@@ -525,29 +478,18 @@ unpack_image() {
         return 1
     fi
     log "Entpacker: $extractor"
-
     local tmp="$GAMEDIR/.extract-tmp"
     rm -rf "$tmp"
     mkdir -p "$tmp"
-
-    log "Entpacke $img nach $tmp ..."
     case "$extractor" in
-        bsdtar)
-            bsdtar -xf "$img" -C "$tmp" 2>>"$LOG" || return 1
-            ;;
-        7z|7za)
-            7z x -y -o"$tmp" "$img" >>"$LOG" 2>&1 || return 1
-            ;;
-        unzip)
-            unzip -o "$img" -d "$tmp" >>"$LOG" 2>&1 || return 1
-            ;;
+        bsdtar) bsdtar -xf "$img" -C "$tmp" 2>>"$LOG" || return 1 ;;
+        7z|7za) 7z x -y -o"$tmp" "$img" >>"$LOG" 2>&1 || return 1 ;;
+        unzip)  unzip -o "$img" -d "$tmp" >>"$LOG" 2>&1 || return 1 ;;
     esac
-
     mkdir -p "$EXTRACTED"
     local subdir
     subdir="$(find "$tmp" -maxdepth 2 -type d \( -name 'PS2' -o -name 'SLUS*' \) 2>/dev/null | head -n 1)"
     if [ -n "$subdir" ] && [ -d "$subdir" ]; then
-        log "Verschiebe Inhalt aus $subdir"
         cp -a "$subdir"/. "$EXTRACTED"/ 2>>"$LOG" || true
     else
         cp -a "$tmp"/. "$EXTRACTED"/ 2>>"$LOG" || true
@@ -565,13 +507,11 @@ if [ -f "$EXTRACTED/SLUS_208.93" ] || [ -f "$EXTRACTED/slus_208.93" ]; then
     log "extracted/ enthaelt bereits SLUS_208.93 — ueberspringe Entpacken."
 else
     NEEDS_UNPACK=1
-
     CHD_FILE=""
     for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
                 "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
         [ -f "$cand" ] && { CHD_FILE="$cand"; break; }
     done
-
     if [ -n "$CHD_FILE" ]; then
         log "CHD gefunden: $CHD_FILE"
         if [ ! -x "$CHDMAN" ]; then
@@ -579,43 +519,30 @@ else
             echo "FEHLER: chdman fehlt." >&2
             exit 1
         fi
-
         TMP_CHD="$GAMEDIR/.chd-extract"
         rm -rf "$TMP_CHD"
         mkdir -p "$TMP_CHD"
         BASE="$(basename "$CHD_FILE")"
         BASE="${BASE%.chd}"; BASE="${BASE%.CHD}"
-
-        log "Extrahiere CHD nach ISO ..."
         CHD_ISO=""
         if "$CHDMAN" extractdvd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.iso" >>"$LOG" 2>&1 \
            && [ -f "$TMP_CHD/$BASE.iso" ]; then
             CHD_ISO="$TMP_CHD/$BASE.iso"
-            log "extractdvd erfolgreich."
         elif "$CHDMAN" extractcd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.cue" \
                                  -ob "$TMP_CHD/$BASE.bin" >>"$LOG" 2>&1 \
              && [ -f "$TMP_CHD/$BASE.bin" ]; then
             CHD_ISO="$TMP_CHD/$BASE.bin"
-            log "extractcd erfolgreich (CUE/BIN)."
         else
-            log "FEHLER: chdman konnte die CHD nicht extrahieren."
             echo "FEHLER: CHD-Extraktion fehlgeschlagen. Log: $LOG" >&2
-            rm -rf "$TMP_CHD"
-            exit 1
+            rm -rf "$TMP_CHD"; exit 1
         fi
-
-        log "Entpacke die entstandene ISO/BIN ..."
         if ! unpack_image "$CHD_ISO"; then
-            log "FEHLER: ISO-Entpacken fehlgeschlagen."
             echo "FEHLER: ISO-Entpacken fehlgeschlagen. Log: $LOG" >&2
-            rm -rf "$TMP_CHD"
-            exit 1
+            rm -rf "$TMP_CHD"; exit 1
         fi
         rm -rf "$TMP_CHD"
-        log "CHD-Verarbeitung abgeschlossen."
         NEEDS_UNPACK=0
     fi
-
     if [ "$NEEDS_UNPACK" = "1" ]; then
         IMG=""
         for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
@@ -623,28 +550,17 @@ else
                     "$GAMEDIR"/*.tar.* "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/*.zip; do
             [ -f "$cand" ] && { IMG="$cand"; break; }
         done
-
         if [ -z "$IMG" ]; then
-            log "FEHLER: Kein Disc-Image und keine CHD gefunden."
             echo "FEHLER: Bitte 'wots2.chd' oder 'wots2.iso' in $GAMEDIR ablegen." >&2
             exit 1
         fi
-        log "Disc-Image: $IMG"
-
         if ! unpack_image "$IMG"; then
-            log "FEHLER: Entpacken fehlgeschlagen."
             echo "FEHLER: Entpacken fehlgeschlagen. Log: $LOG" >&2
             exit 1
         fi
     fi
-
-    log "Inhalt von extracted/:"
-    ls -la "$EXTRACTED" | head -20 | log_pipe
-
     if [ ! -f "$EXTRACTED/SLUS_208.93" ] && [ ! -f "$EXTRACTED/slus_208.93" ]; then
-        log "FEHLER: SLUS_208.93 fehlt in extracted/."
         echo "FEHLER: SLUS_208.93 fehlt. Log: $LOG" >&2
-        find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | log_pipe
         exit 1
     fi
     log "SLUS_208.93 vorhanden — Entpacken OK."
@@ -666,9 +582,7 @@ GPTOKEYB_PID=""
 
 kill_wots2_escalate() {
     [ -z "$WOTS2_PID" ] && return 0
-    if ! kill -0 "$WOTS2_PID" 2>/dev/null; then
-        return 0
-    fi
+    if ! kill -0 "$WOTS2_PID" 2>/dev/null; then return 0; fi
     log "sende SIGTERM an wots2 (PID $WOTS2_PID)"
     kill -TERM "$WOTS2_PID" 2>/dev/null || true
     local elapsed=0
@@ -731,12 +645,12 @@ log "wots2 beendet mit Status $WOTS2_STATUS"
 if [ "$WOTS2_STATUS" -gt 128 ]; then
     SIGNAL=$((WOTS2_STATUS - 128))
     case "$SIGNAL" in
-        4)  SIGNAME="SIGILL — Illegal Instruction (auf Cortex-A35 oft eine LSE-Atomic oder falsche CPU-Flags)" ;;
-        6)  SIGNAME="SIGABRT — Abort (meist eine fehlgeschlagene Zusicherung)" ;;
-        7)  SIGNAME="SIGBUS — Bus Error (meist ein Speicherzugriff auf eine ungueltige Adresse)" ;;
+        4)  SIGNAME="SIGILL — Illegal Instruction" ;;
+        6)  SIGNAME="SIGABRT — Abort" ;;
+        7)  SIGNAME="SIGBUS — Bus Error" ;;
         8)  SIGNAME="SIGFPE — Floating-Point Exception" ;;
-        9)  SIGNAME="SIGKILL — hart abgeschossen (Launcher-Eskalation oder OOM-Killer)" ;;
-        11) SIGNAME="SIGSEGV — Segmentation Fault (Null-Dereferenz oder Stack-Ueberlauf)" ;;
+        9)  SIGNAME="SIGKILL — hart abgeschossen" ;;
+        11) SIGNAME="SIGSEGV — Segmentation Fault" ;;
         15) SIGNAME="SIGTERM — regulaer beendet" ;;
         *)  SIGNAME="Signal $SIGNAL" ;;
     esac
@@ -747,43 +661,20 @@ if [ -s "$WOTS2_STDOUT" ]; then
     log ""
     log "Auszug aus wots2-stdout.txt (letzte 40 Zeilen):"
     tail -40 "$WOTS2_STDOUT" | log_pipe
-else
-    log "wots2-stdout.txt ist leer."
 fi
 
 if [ -s "$WOTS2_STDERR" ]; then
     log ""
     log "Auszug aus wots2-stderr.txt (letzte 40 Zeilen):"
     tail -40 "$WOTS2_STDERR" | log_pipe
-
     log ""
-    log "Erkannte Fehlermuster in wots2-stderr.txt:"
-    if grep -q "shader error" "$WOTS2_STDERR"; then
-        log "  - Shader-Kompilierung fehlgeschlagen: siehe [GS] shader error"
-    fi
-    if grep -q "link error" "$WOTS2_STDERR"; then
-        log "  - Shader-Link fehlgeschlagen: siehe [GS] link error"
-    fi
-    if grep -q "no OpenGL 3.3" "$WOTS2_STDERR"; then
-        log "  - Kein OpenGL-3.x-Kontext — Mali-Blob oder EGL-Config stimmt nicht"
-    fi
-    if grep -q "not found" "$WOTS2_STDERR"; then
-        log "  - Eine Bibliothek wurde nicht gefunden"
-    fi
-    if grep -q "SDL_CreateWindow" "$WOTS2_STDERR"; then
-        log "  - SDL_CreateWindow ist gescheitert — evtl. KMSDRM-Problem"
-    fi
-    if grep -q "GLIBCXX" "$WOTS2_STDERR"; then
-        log "  - GLIBCXX-Version zu alt — sollte durch -static-libstdc++ nicht passieren"
-    fi
-    if grep -q "Segmentation fault" "$WOTS2_STDERR"; then
-        log "  - Segmentation Fault"
-    fi
-    grep -c "" "$WOTS2_STDERR" 2>/dev/null | {
-        read -r n; log "  (stderr hat $n Zeilen insgesamt)"
-    }
-else
-    log "wots2-stderr.txt ist leer."
+    log "Erkannte Fehlermuster:"
+    grep -q "shader error" "$WOTS2_STDERR" && log "  - Shader-Kompilierung fehlgeschlagen"
+    grep -q "link error" "$WOTS2_STDERR" && log "  - Shader-Link fehlgeschlagen"
+    grep -q "no OpenGL 3.3" "$WOTS2_STDERR" && log "  - Kein OpenGL-3.x-Kontext"
+    grep -q "not found" "$WOTS2_STDERR" && log "  - Eine Bibliothek wurde nicht gefunden"
+    grep -q "Segmentation fault" "$WOTS2_STDERR" && log "  - Segmentation Fault"
+    grep -c "" "$WOTS2_STDERR" 2>/dev/null | { read -r n; log "  (stderr hat $n Zeilen)"; }
 fi
 
 log_section "ENDE"
