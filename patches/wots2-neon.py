@@ -1,15 +1,38 @@
 #!/usr/bin/env python3
 """
-Ersetzt heiße Skalar-Schleifen in src/hal/gs.cpp durch NEON.
+patches/wots2-neon.py (Revision v3)
 
-Enthält:
-  1. wots2_lerp_vertex  — Vertex-Interpolation (2D)
-  2. wots2_lerp_vertex3 — Vertex3-Interpolation (3D)
+Ersetzt heisse Skalar-Schleifen in src/hal/gs.cpp durch NEON:
+
+  1. wots2_lerp_vertex  — Vertex-Interpolation (2D, 8 floats)
+  2. wots2_lerp_vertex3 — Vertex3-Interpolation (3D, 9 floats)
   3. wots2_box_outside  — Frustum-Culling
+
+Revision v3 — Transpositions-Bug im Culling behoben:
+    v2 (die vorherige Version) laedt in wots2_box_outside die Matrix m
+    mit vld1q_f32(m + 0/4/8/12) und multipliziert elementweise. Das
+    interpretiert die zeilenweise gespeicherte Matrix als spaltenweise:
+        c[0] = p0*m[0] + p1*m[1] + p2*m[2]  + m[3]    (falsch)
+        c[0] = p0*m[0] + p1*m[4] + p2*m[8]  + m[12]   (richtig, wie C++)
+
+    Weil das Vorzeichen der projizierten Box-Ecken dadurch effektiv
+    zufaellig war, sind Waende, NPCs und Charakterteile an der
+    Frustum-Grenze sichtbar ein- und ausgeploppt, und es wurden zu
+    viele eigentlich verdeckte Meshes gezeichnet.
+
+    Der Fix nutzt vld4q_f32, das die 16 Floats deinterleaved in vier
+    Vektoren laedt, deren Elemente genau die Spalten der zeilenweise
+    gespeicherten Matrix sind:
+        cols.val[0] = (m[0], m[4], m[8], m[12])   — Spalte 0
+        cols.val[1] = (m[1], m[5], m[9], m[13])   — Spalte 1
+        cols.val[2] = (m[2], m[6], m[10], m[14])  — Spalte 2
+        cols.val[3] = (m[3], m[7], m[11], m[15])  — Spalte 3
+
+    Damit ist die NEON-Berechnung bitgenau zur C++-Originalversion.
 
 Die Lerp-Helper sind mit Interleaving geschrieben: die Ladeoperationen
 werden zwischen die Berechnungen gezogen, damit der in-order Cortex-A35
-seine Pipeline füllen kann (1 Load/Store-Port).
+seine Pipeline fuellen kann (1 Load/Store-Port).
 
 Python 3.6+ kompatibel (keine PEP-585-Typhinweise).
 """
@@ -23,6 +46,17 @@ NEON_HELPER = r'''
 // ── NEON-Helfer (aarch64) ─────────────────────────────────────────────
 // Cortex-A35: in-order Pipeline, ein Load/Store-Port. Die Ladebefehle
 // sind zwischen die Berechnungen gezogen (Interleaving).
+//
+// Wichtig zur Matrix-Konvention in box_outside: die MVP-Matrix m liegt
+// zeilenweise (row-major) im Speicher. Die C++-Originalversion von
+// box_outside berechnet c[j] als Skalarprodukt p · Spalte_j, also:
+//     c[0] = p0*m[0] + p1*m[4] + p2*m[8]  + m[12]
+//     c[1] = p0*m[1] + p1*m[5] + p2*m[9]  + m[13]
+//     c[2] = p0*m[2] + p1*m[6] + p2*m[10] + m[14]
+//     c[3] = p0*m[3] + p1*m[7] + p2*m[11] + m[15]
+// Ein einfaches vld1q_f32(m + 0/4/8/12) wuerde die ZEILEN liefern und
+// damit eine voellig andere (und falsche) Projektion. vld4q_f32 liefert
+// genau die Spalten in den vier val[]-Feldern.
 #include <arm_neon.h>
 
 static inline void wots2_lerp_vertex(const Vertex& a, const Vertex& b, float t, Vertex& o) {
@@ -59,20 +93,25 @@ static inline void wots2_lerp_vertex3(const Vertex3& a, const Vertex3& b, float 
 }
 
 static inline bool wots2_box_outside(const float* lo, const float* hi, const float* m, float xscale) {
-    const float32x4_t c0 = vld1q_f32(m + 0);
-    const float32x4_t c1 = vld1q_f32(m + 4);
-    const float32x4_t c2 = vld1q_f32(m + 8);
-    const float32x4_t c3 = vld1q_f32(m + 12);
-    alignas(16) float e[8][4];
-    for (int i = 0; i < 8; ++i) {
-        e[i][0] = (i & 1) ? hi[0] : lo[0];
-        e[i][1] = (i & 2) ? hi[1] : lo[1];
-        e[i][2] = (i & 4) ? hi[2] : lo[2];
-        e[i][3] = 1.0f;
-    }
+    // vld4q_f32 deinterleaved m[0..15] in vier Vektoren, deren Elemente
+    // genau die Spalten der zeilenweise gespeicherten Matrix sind:
+    //     cols.val[k] = (m[k], m[4+k], m[8+k], m[12+k])
+    // Damit ist ve · cols.val[k] das korrekte Skalarprodukt
+    // p0*m[k] + p1*m[4+k] + p2*m[8+k] + 1*m[12+k].
+    const float32x4x4_t cols = vld4q_f32(m);
+    const float32x4_t c0 = cols.val[0];
+    const float32x4_t c1 = cols.val[1];
+    const float32x4_t c2 = cols.val[2];
+    const float32x4_t c3 = cols.val[3];
+
     int out[6] = {0, 0, 0, 0, 0, 0};
     for (int i = 0; i < 8; ++i) {
-        const float32x4_t ve = vld1q_f32(e[i]);
+        alignas(16) float e[4];
+        e[0] = (i & 1) ? hi[0] : lo[0];
+        e[1] = (i & 2) ? hi[1] : lo[1];
+        e[2] = (i & 4) ? hi[2] : lo[2];
+        e[3] = 1.0f;
+        const float32x4_t ve = vld1q_f32(e);
         const float cx = vaddvq_f32(vmulq_f32(ve, c0));
         const float cy = vaddvq_f32(vmulq_f32(ve, c1));
         const float cz = vaddvq_f32(vmulq_f32(ve, c2));
