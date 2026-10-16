@@ -13,6 +13,10 @@
 #   WOTS2_FX_SCALE=N               Effekt-Anzahl (Default: 0.4)
 #   WOTS2_NO_CULL=0/1              Frustum-Culling aus (Default: 0)
 #   WOTS2_NO_BATCH=0/1             2D-Batching aus (Default: 0)
+#   WOTS2_NO_MERGE=0/1             3D-Draw-Merge aus (Default: 0)
+#   WOTS2_TRACE_MERGE=0/1          Merge-Statistik ins stdout (Default: 0)
+#   WOTS2_NPC_LOD_DIST=N           LOD-2-Schwelle in Units (Default: 8)
+#   WOTS2_NPC_MAX_DIST=N           Harte NPC-Distanz, 0=aus (Default: 0)
 #   WOTS2_PERSISTENT_BUFFERS=0/1   NIEMALS auf 1 setzen (Default: 0)
 #   WOTS2_PAD_DIAG=0/1             Stick-Diagnose ins stderr (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
@@ -374,6 +378,18 @@ export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
 
+# 3D-Draw-Merge (wots2-merge-3d-draws.py). Default 0 = an.
+export WOTS2_NO_MERGE="${WOTS2_NO_MERGE:-0}"
+export WOTS2_TRACE_MERGE="${WOTS2_TRACE_MERGE:-0}"
+
+# NPC-LOD (wots2-npc-lod-closer.py). Default 8 Weltunits (Original: 12).
+# 0 = immer LOD 2, 12 = wie im Original, 100 = nie LOD 2.
+export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-8}"
+
+# NPC-Max-Dist (wots2-npc-max-dist.py). Default 0 = aus.
+# Ein Wert um 18-22 hilft in der Stadt, laesst Figuren aber poppen.
+export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-0}"
+
 # Persistent buffers: NIEMALS auf 1 setzen. Der Patch liefert auf Mali-G31
 # undefinierte Vertex-Daten und macht das Bild schwarz/weiss.
 export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-0}"
@@ -408,7 +424,10 @@ log "  WOTS2_SAVE_ROOT=$WOTS2_SAVE_ROOT"
 log "  WOTS2_SHADER_CACHE=$WOTS2_SHADER_CACHE"
 log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
 log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
+log "  WOTS2_NO_MERGE=$WOTS2_NO_MERGE"
 log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
+log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST"
+log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST"
 log "  WOTS2_PERSISTENT_BUFFERS=$WOTS2_PERSISTENT_BUFFERS"
 log "  WOTS2_PAD_DIAG=$WOTS2_PAD_DIAG"
 log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
