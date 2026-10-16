@@ -6,16 +6,13 @@ SDL2's built-in database takes the H700 handhelds' controls (all of them
 report the same generic GUID) for an ODROID-GO 2 pad, with the wrong
 buttons. EmulationStation knows each device's controls by name; this turns
 the entry of every connected device into an SDL mapping, as Batocera's
-emulator launcher does: EmulationStation's buttons are named by the
-Nintendo layout (a on the right, b at the bottom), SDL's by the Xbox layout
-(a at the bottom).
+emulator launcher does.
 
-RK3326-Fix: Der M9 Pro ist baugleich mit dem R36S. Bei der originalen
-Firmware-Meldung landen A und B (und X und Y) im Spiel vertauscht. Diese
-Version tauscht sie auf der SDL-Seite zusaetzlich, damit sie dort landen,
-wo der Nutzer sie erwartet. Wenn das Spiel danach weiterhin vertauschte
-Tasten zeigt, liegt es an der es_input.cfg des Geraets — dann muessen
-die Buttons dort getauscht werden.
+Revision ohne Tausch: Die ES-Namen werden 1:1 auf die SDL-Namen abgebildet.
+Das ist richtig, wenn die es_input.cfg des Geraets die Buttons bereits im
+Xbox-Layout meldet. Wenn sie im Nintendo-Layout meldet (EmulationStation-
+Standard), muessen a<->b und x<->y getauscht werden — dann bitte
+NAMES_RK3326_SWAP unten verwenden.
 """
 
 import re
@@ -25,14 +22,30 @@ CONFIGS = [
     "/userdata/system/configs/emulationstation/es_input.cfg",
     "/usr/share/emulationstation/es_input.cfg",
 ]
-# EmulationStation's name -> SDL's
+
+# Standard: 1:1, kein Tausch.
 NAMES = {
+    "a": "a", "b": "b", "x": "x", "y": "y",
+    "select": "back", "start": "start", "hotkey": "guide",
+    "pageup": "leftshoulder", "pagedown": "rightshoulder",
+    "l2": "lefttrigger", "r2": "righttrigger",
+    "l3": "leftstick", "r3": "rightstick",
+    "up": "dpup", "down": "dpdown", "left": "dpleft", "right": "dpright",
+    "joystick1left": "leftx", "joystick1up": "lefty",
+    "joystick2left": "rightx", "joystick2up": "righty",
+}
+
+# Falls die es_input.cfg Nintendo-Layout verwendet: diese Map verwenden.
+# In der main() unten `NAMES` durch `NAMES_RK3326_SWAP` ersetzen.
+NAMES_RK3326_SWAP = {
     "b": "a", "a": "b", "y": "x", "x": "y",
     "select": "back", "start": "start", "hotkey": "guide",
     "pageup": "leftshoulder", "pagedown": "rightshoulder",
-    "l2": "lefttrigger", "r2": "righttrigger", "l3": "leftstick", "r3": "rightstick",
+    "l2": "lefttrigger", "r2": "righttrigger",
+    "l3": "leftstick", "r3": "rightstick",
     "up": "dpup", "down": "dpdown", "left": "dpleft", "right": "dpright",
-    "joystick1left": "leftx", "joystick1up": "lefty", "joystick2left": "rightx", "joystick2up": "righty",
+    "joystick1left": "leftx", "joystick1up": "lefty",
+    "joystick2left": "rightx", "joystick2up": "righty",
 }
 
 
