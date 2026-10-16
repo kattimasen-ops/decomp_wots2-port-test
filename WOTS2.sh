@@ -9,19 +9,16 @@
 #   (Select+Start) beendet wots2 sauber. Wenn wots2 auf SIGTERM
 #   nicht reagiert, eskaliert der Launcher nach 3 Sekunden auf SIGKILL.
 #
-# AUDIO-HINWEIS:
-#   Unser SDL2-Bundle wird mit ALSA-Support gebaut. SDL waehlt den
-#   Audio-Treiber selbst, sobald er verfuegbar ist.
-#
 # Steuerung:
-#   WOTS2_LIBDIAG=0/1       LD_DEBUG-Probe (Default: 1)
-#   WOTS2_FX_SCALE=N        Effekt-Anzahl (Default: 0.6)
-#   WOTS2_NO_CULL=0/1       Frustum-Culling aus (Default: 0)
-#   WOTS2_NO_BATCH=0/1      2D-Batching aus (Default: 0)
-#   WOTS2_SHADER_CACHE=0/1  Shader-Cache (Default: 1)
-#   WOTS2_SHADER_LRU=N      Frames bis Shader-Unload (Default: 120)
-#   WOTS2_SPLASH=N          Splash-Dauer in Sekunden (Default: 2.5)
-#   WOTS2_KILL_TIMEOUT=N    Sekunden bis SIGKILL (Default: 3)
+#   WOTS2_LIBDIAG=0/1              LD_DEBUG-Probe (Default: 1)
+#   WOTS2_FX_SCALE=N               Effekt-Anzahl (Default: 0.4)
+#   WOTS2_NO_CULL=0/1              Frustum-Culling aus (Default: 0)
+#   WOTS2_NO_BATCH=0/1             2D-Batching aus (Default: 0)
+#   WOTS2_PERSISTENT_BUFFERS=0/1   glBufferSubData statt glBufferData (Default: 1)
+#   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
+#   WOTS2_SHADER_LRU=N             Frames bis Shader-Unload (Default: 120)
+#   WOTS2_SPLASH=N                 Splash-Dauer in Sekunden (Default: 2.5)
+#   WOTS2_KILL_TIMEOUT=N           Sekunden bis SIGKILL (Default: 3)
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
@@ -148,7 +145,6 @@ elif [ -f "$GAMEDIR/sdl_mapping.py" ]; then
         log "SDL_GAMECONTROLLERCONFIG aus sdl_mapping.py gesetzt."
 fi
 
-# gptokeyb braucht eine DATEI, nicht nur die Env-Variable
 if [ -n "${SDL_GAMECONTROLLERCONFIG:-}" ]; then
     export SDL_GAMECONTROLLERCONFIG_FILE="/tmp/wots2-gamecontrollerdb.txt"
     printf '%s\n' "$SDL_GAMECONTROLLERCONFIG" > "$SDL_GAMECONTROLLERCONFIG_FILE" 2>/dev/null || true
@@ -351,7 +347,7 @@ export MALLOC_TRIM_THRESHOLD_=131072
 export MALLOC_MMAP_THRESHOLD_=131072
 
 export MALI_AFBC=1
-export MALI_MAX_ASYNC_BUFFER_COUNT=2
+export MALI_MAX_ASYNC_BUFFER_COUNT=4
 export MALI_BUFFER_PREALLOC=1
 
 export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
@@ -359,9 +355,11 @@ export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 
 export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
 
+export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-1}"
+
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 
-export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.6}"
+export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.4}"
 
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
 
@@ -389,6 +387,7 @@ log "  WOTS2_SHADER_CACHE=$WOTS2_SHADER_CACHE"
 log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
 log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
 log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
+log "  WOTS2_PERSISTENT_BUFFERS=$WOTS2_PERSISTENT_BUFFERS"
 log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
@@ -425,7 +424,6 @@ else
     log "  Der Launcher beendet wots2 trotzdem sauber bei SIGTERM/SIGINT."
 fi
 
-# ── LD_DEBUG=libs Probe ──────────────────────────────────────────────
 LIBDIAG_LOG="$GAMEDIR/wots2-libdiag.txt"
 if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
     log ""
@@ -658,7 +656,6 @@ on_signal() {
     kill_wots2_escalate
 }
 
-# gptokeyb mit -k <application name> starten, damit Select+Start wots2 beendet.
 if find_gptokeyb; then
     "$GPTOKEYB_PATH" "./wots2" -k "wots2" >/dev/null 2>&1 &
     GPTOKEYB_PID=$!
