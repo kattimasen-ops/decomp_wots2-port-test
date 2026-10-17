@@ -243,6 +243,78 @@ jobs:
 
           echo "== Patches fertig =="
 
+      - name: Gepatchte Quelldateien sichern
+        if: always()
+        run: |
+          set +e
+          OUT="$GITHUB_WORKSPACE/patched-sources"
+          rm -rf "$OUT"
+          mkdir -p "$OUT"
+
+          # Diese Dateien werden von mindestens einem Patch modifiziert.
+          FILES=(
+            "src/hal/gs.cpp"
+            "src/hal/pad.cpp"
+            "src/game/collision_world.cpp"
+            "src/game/chara_resources.cpp"
+            "src/game/chara_mgr.cpp"
+            "src/game/chara_body.cpp"
+            "src/game/chara.cpp"
+            "src/game/map_collision.cpp"
+            "src/game/world_effects.cpp"
+            "src/engine/motion.cpp"
+            "src/native/hle.cpp"
+            "src/native/hle_chara.cpp"
+            "src/native/model.cpp"
+            "include/native/model.h"
+            "include/hal/gs.h"
+          )
+
+          for f in "${FILES[@]}"; do
+            if [ -f "$f" ]; then
+              mkdir -p "$OUT/$(dirname "$f")"
+              cp -a "$f" "$OUT/$f"
+              echo "  kopiert: $f"
+            else
+              echo "  fehlt:   $f"
+            fi
+          done
+
+          # port_options.h kann an unterschiedlichen Stellen liegen
+          PORTOPT=$(find include -name "port_options.h" 2>/dev/null | head -n 1)
+          if [ -n "$PORTOPT" ]; then
+            mkdir -p "$OUT/$(dirname "$PORTOPT")"
+            cp -a "$PORTOPT" "$OUT/$PORTOPT"
+            echo "  kopiert: $PORTOPT"
+          fi
+
+          # Manifest mit Größe und Zeilenzahl — hilft beim schnellen Einordnen
+          MANIFEST="$OUT/MANIFEST.txt"
+          {
+            echo "Gepatchte Quelldateien (Stand nach 'Patches anwenden')"
+            echo "Commit: ${{ github.sha }}"
+            echo "Datum:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            printf '  %-42s %10s  %8s\n' "Datei" "Bytes" "Zeilen"
+            echo "  $(printf '%.0s-' $(seq 1 70))"
+            find "$OUT" -type f ! -name MANIFEST.txt | sort | while read -r p; do
+              rel="${p#$OUT/}"
+              printf '  %-42s %10s  %8s\n' "$rel" \
+                "$(stat -c%s "$p")" "$(wc -l < "$p")"
+            done
+          } > "$MANIFEST"
+          echo "== Manifest =="
+          cat "$MANIFEST"
+
+      - name: Upload gepatchte Quellen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: patched-sources
+          path: patched-sources/
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: CMake konfigurieren
         run: |
           cmake -S . -B build -G Ninja \
