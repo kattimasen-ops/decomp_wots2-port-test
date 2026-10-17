@@ -230,7 +230,6 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; }
 
           # ══ NEUE PERFORMANCE-PATCHES ═══════════════════════════════
-
           S=$(find_script wots2-gs-novsync.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
@@ -243,13 +242,19 @@ jobs:
           S=$(find_script wots2-hud-fast-text.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/hud.cpp; }
 
-          # (5) Sichtlinien-Cache (spart massiv CPU bei NPC-KI)
           S=$(find_script wots2-collision-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_tasks.cpp; }
 
-          # (6) Schnellere Fades (spart ~130 Draw-Calls beim Übergang)
           S=$(find_script wots2-fast-fades.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; }
+
+          # (7) Skelett-Berechnung für gecullte NPCs überspringen
+          S=$(find_script wots2-chara-draw-cull.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
+
+          # (8) Schwertspur nur für den Spieler zeichnen
+          S=$(find_script wots2-no-sword-shadow.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
 
           echo "== Patches fertig =="
 
@@ -288,12 +293,6 @@ jobs:
               cp -a "$f" "$OUT/$f"
             fi
           done
-
-          PORTOPT=$(find include -name "port_options.h" 2>/dev/null | head -n 1)
-          if [ -n "$PORTOPT" ]; then
-            mkdir -p "$OUT/$(dirname "$PORTOPT")"
-            cp -a "$PORTOPT" "$OUT/$PORTOPT"
-          fi
 
       - name: Upload gepatchte Quellen
         if: always()
