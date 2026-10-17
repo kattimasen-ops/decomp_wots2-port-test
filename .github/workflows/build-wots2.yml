@@ -124,169 +124,128 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gles-precision.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gles-precision.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-tex-storage.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-tex-storage.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-invalidate.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-invalidate.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-shader-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-shader-cache.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-batch-2d.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-batch-2d.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-splash.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-splash.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-init-diag.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-init-diag.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-combat.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-combat.py nicht gefunden)"
-
-          echo "  (wots2-persistent-buffers.py — AUS, Ursache des schwarzen Bildes)"
-          echo "  (wots2-merge-3d-draws.py — AUS: kann strukturell nie greifen)"
-          echo "  (wots2-gs-orphan-vbo.py — AUS: auf Mali-G31 40x langsamer)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
 
           S=$(find_script wots2-collision-relative-neon.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; } \
-                    || echo "  (wots2-collision-relative-neon.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
 
           S=$(find_script wots2-chara-resources-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_resources.cpp; } \
-                    || echo "  (wots2-chara-resources-cache.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_resources.cpp; }
 
           S=$(find_script wots2-chara-mgr-find-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_mgr.cpp; } \
-                    || echo "  (wots2-chara-mgr-find-cache.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_mgr.cpp; }
 
           S=$(find_script wots2-chara-body-last-array.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_body.cpp; } \
-                    || echo "  (wots2-chara-body-last-array.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_body.cpp; }
 
           S=$(find_script wots2-map-collision-cell-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; } \
-                    || echo "  (wots2-map-collision-cell-cache.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; }
 
           S=$(find_script wots2-fx-scale.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
-                    || echo "  (wots2-fx-scale.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; }
 
           S=$(find_script wots2-motion-neon.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
-                    || echo "  (wots2-motion-neon.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; }
 
           S=$(find_script wots2-pad-swap.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/pad.cpp; } \
-                    || echo "  (wots2-pad-swap.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/pad.cpp; }
 
           S=$(find_script patch_config_defaults.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (patch_config_defaults.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; }
 
           # ══ SICHERE ZUSATZ-PATCHES ══════════════════════════════════
           S=$(find_script wots2-gs-perf-trace-v3.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-perf-trace-v3.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-state-dedup.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-state-dedup.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-no-bump.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-no-bump.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-lights-cap.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-lights-cap.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-bloom-env.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-bloom-env.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-no-post-env.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-no-post-env.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-npc-lod-closer.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
-                    || echo "  (wots2-npc-lod-closer.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
 
           S=$(find_script wots2-npc-max-dist.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
-                    || echo "  (wots2-npc-max-dist.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
 
           S=$(find_script wots2-hle-neon-matmul.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
-                    || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; }
 
           S=$(find_script wots2-chara-draw-lod.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
-                    || echo "  (wots2-chara-draw-lod.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; }
 
           S=$(find_script wots2-chara-pose-pool.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
-                    || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; }
 
           S=$(find_script wots2-map-batching.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (wots2-map-batching.py nicht gefunden — alter Pfad)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; }
 
           S=$(find_script wots2-npc-sim-distance.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (wots2-npc-sim-distance.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; }
 
           S=$(find_script wots2-frame-timing.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (wots2-frame-timing.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; }
 
           S=$(find_script wots2-gs-frame-timing.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
-                    || echo "  (wots2-gs-frame-timing.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; }
 
           S=$(find_script wots2-app-timing.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; } \
-                    || echo "  (wots2-app-timing.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; }
 
-          # ══ NEUE PATCHE (Batch 1: 3x sicher) ═══════════════════════
+          # ══ NEUE PERFORMANCE-PATCHES ═══════════════════════════════
 
-          # (1) V-Sync aus: gs.cpp las nur WOTS2_FAST, nicht WOTS2_NO_VSYNC.
-          # Effekt: SDL_GL_SetSwapInterval(0) → die ~15 ms V-Blank-Blockade
-          # im Swap fällt weg. Größter Einzelhebel (~15 ms).
+          # (1) V-Sync aus
           S=$(find_script wots2-gs-novsync.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-novsync.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # (2) Schwerter für ferne NPCs überspringen. Default 999 = aus
-          # (identisches Verhalten). WOTS2_SWORD_DRAW_DIST=12 spart ~2-3 ms.
+          # (2) Schwerter für ferne NPCs überspringen
           S=$(find_script wots2-sword-draw-dist.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
-                    || echo "  (wots2-sword-draw-dist.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
 
-          # (3) Skeleton_Swing nur für tatsächlich gezeichnete NPCs. Für
-          # gecullte NPCs werden die Swing-Bones in Chara_StepMap ohnehin
-          # nächsten Frame neu berechnet. ~0.3 ms.
+          # (3) Skeleton_Swing für gecullte NPCs überspringen
           S=$(find_script wots2-skeleton-swing-skip.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
-                    || echo "  (wots2-skeleton-swing-skip.py nicht gefunden)"
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
+
+          # (4) HUD-Text-Schatten entfernen (massive Draw-Call-Ersparnis)
+          S=$(find_script wots2-hud-fast-text.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/hud.cpp; }
 
           echo "== Patches fertig =="
 
@@ -308,6 +267,7 @@ jobs:
             "src/game/chara.cpp"
             "src/game/map_collision.cpp"
             "src/game/world_effects.cpp"
+            "src/game/hud.cpp"
             "src/engine/motion.cpp"
             "src/engine/app.cpp"
             "src/native/hle.cpp"
@@ -321,9 +281,6 @@ jobs:
             if [ -f "$f" ]; then
               mkdir -p "$OUT/$(dirname "$f")"
               cp -a "$f" "$OUT/$f"
-              echo "  kopiert: $f"
-            else
-              echo "  fehlt:   $f"
             fi
           done
 
@@ -331,25 +288,7 @@ jobs:
           if [ -n "$PORTOPT" ]; then
             mkdir -p "$OUT/$(dirname "$PORTOPT")"
             cp -a "$PORTOPT" "$OUT/$PORTOPT"
-            echo "  kopiert: $PORTOPT"
           fi
-
-          MANIFEST="$OUT/MANIFEST.txt"
-          {
-            echo "Gepatchte Quelldateien (Stand nach 'Patches anwenden')"
-            echo "Commit: ${{ github.sha }}"
-            echo "Datum:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo ""
-            printf '  %-42s %10s  %8s\n' "Datei" "Bytes" "Zeilen"
-            echo "  $(printf '%.0s-' $(seq 1 70))"
-            find "$OUT" -type f ! -name MANIFEST.txt | sort | while read -r p; do
-              rel="${p#$OUT/}"
-              printf '  %-42s %10s  %8s\n' "$rel" \
-                "$(stat -c%s "$p")" "$(wc -l < "$p")"
-            done
-          } > "$MANIFEST"
-          echo "== Manifest =="
-          cat "$MANIFEST"
 
       - name: Upload gepatchte Quellen
         if: always()
@@ -357,7 +296,6 @@ jobs:
         with:
           name: patched-sources
           path: patched-sources/
-          if-no-files-found: warn
           retention-days: 14
 
       - name: CMake konfigurieren
@@ -373,14 +311,6 @@ jobs:
 
       - name: Bauen
         run: cmake --build build -j "$JOBS"
-
-      - name: Binary-Abhängigkeiten protokollieren
-        run: |
-          set -euo pipefail
-          aarch64-linux-gnu-readelf -d build/wots2 | grep -E 'NEEDED|SONAME' || true
-          aarch64-linux-gnu-readelf -l build/wots2 | grep -i interpreter || true
-          ls -la build/wots2
-          file build/wots2
 
       - name: Bundle vorbereiten
         run: |
@@ -417,7 +347,6 @@ jobs:
           [ -f "$STAGE/wots2/chdman" ] && chmod 755 "$STAGE/wots2/chdman" || true
 
           touch "$STAGE/wots2/extracted/.gitkeep" "$STAGE/wots2/shader_cache/.gitkeep"
-          find "$STAGE" -maxdepth 3 -printf '  %M %8s  %p\n'
 
       - name: Tarball erzeugen
         run: |
@@ -425,7 +354,6 @@ jobs:
           cd dist
           tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh README.md 2>/dev/null || \
             tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh
-          tar -tzf wots2-rk3326.tar.gz | head -40
           ls -la
 
       - name: Upload Artefakt (Bundle)
@@ -435,16 +363,3 @@ jobs:
           path: dist/wots2-rk3326.tar.gz
           retention-days: 30
           if-no-files-found: error
-
-      - name: Fehleranalyse
-        if: always()
-        run: bash scripts/ci-error-report.sh || true
-
-      - name: Upload Fehleranalyse
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: error-analysis
-          path: build-error-analysis.txt
-          if-no-files-found: warn
-          retention-days: 30
