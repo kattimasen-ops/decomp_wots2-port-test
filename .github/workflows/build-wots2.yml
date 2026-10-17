@@ -262,6 +262,14 @@ jobs:
           S=$(find_script wots2-neon-matrix.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; }
 
+          # (11) NEON VecMath (Hardware-Anpassung)
+          S=$(find_script wots2-neon-vecmath.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/camera.cpp; }
+
+          # (12) NEON Particles (Hardware-Anpassung)
+          S=$(find_script wots2-neon-particles.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; }
+
           echo "== Patches fertig =="
 
       - name: Gepatchte Quelldateien sichern
@@ -283,6 +291,7 @@ jobs:
             "src/game/map_collision.cpp"
             "src/game/world_effects.cpp"
             "src/game/hud.cpp"
+            "src/game/camera.cpp"
             "src/engine/motion.cpp"
             "src/engine/app.cpp"
             "src/native/hle.cpp"
