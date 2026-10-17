@@ -22,7 +22,7 @@
 #   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
 #
 # ── Zahlenwerte ──────────────────────────────────────────────────────────
-#   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 4)
+#   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1 = aus)
 #   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle in Units (Default: 6)
 #   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz, 0=aus (Default: 0)
 #   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 2)
@@ -33,14 +33,9 @@
 #   WOTS2_LIBDIAG=0/1               LD_DEBUG-Probe (Default: 1)
 #
 # ── Wichtiger Hinweis zu getenv() ────────────────────────────────────────
-# Der Port prüft seine Flags mit getenv(...) != nullptr, also "ist die
-# Variable gesetzt?", nicht "ist sie 1?". Würde dieses Skript z. B.
-# WOTS2_NO_CULL=0 exportieren, wäre Culling TROTZDEM aus. Deshalb werden
-# alle Bool-Flags weiter unten mit wots2_export_flag() gesetzt: nur
-# exportieren wenn 1, sonst unset.
-#
-# ── Sofort-Tipp für 30-FPS-Versuch ───────────────────────────────────────
-# In port.ini: render=320x240  (halbiert die Pixel-Arbeit)
+# Der Port prüft seine Flags mit getenv(...) != nullptr. Deshalb werden
+# alle Bool-Flags mit wots2_export_flag() gesetzt: nur exportieren wenn
+# 1, sonst unset.
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
@@ -413,27 +408,21 @@ export MALI_BUFFER_PREALLOC=1
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 
 # ── WOTS2-Flags: NUR exportieren wenn 1, sonst unset ─────────────────────
-# Culling: Default AN
 wots2_export_flag WOTS2_NO_CULL   0
-# 2D-Batching: Default AN
 wots2_export_flag WOTS2_NO_BATCH  0
-# Bump-Mapping: Default AUS
 wots2_export_flag WOTS2_NO_BUMP   1
-# Shadow-Pass: Default AN (nur jeden 4. Frame neu, siehe SHADOW_INTERVAL)
 wots2_export_flag WOTS2_NO_SHADOW 0
-# Debug-Traces
 wots2_export_flag WOTS2_TRACE_MERGE 0
 wots2_export_flag WOTS2_TRACE_CULL  1
 wots2_export_flag WOTS2_TRACE_PAIR  0
 wots2_export_flag WOTS2_PERF_TRACE  1
 wots2_export_flag WOTS2_PAD_DIAG    0
-# Shader-Cache: Default AN
 wots2_export_flag WOTS2_SHADER_CACHE 1
-# Persistent Buffers: NIEMALS an
 unset WOTS2_PERSISTENT_BUFFERS
 
 # ── WOTS2-Zahlenwerte ────────────────────────────────────────────────────
-export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-4}"
+# WOTS2_SHADOW_INTERVAL=1: Shadow-Pass jeden Frame neu (kein Flackern)
+export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.25}"
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
