@@ -230,18 +230,29 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
+          # ══ NEUER PATCH: NPC-DRAW-PFAD-LOD ══════════════════════════
+          # Muss VOR chara-pose-pool.py laufen: chara-draw-lod erwartet
+          # die unveraenderten pose/headPose-Loops in hle_chara.cpp.
+          # Vereinfacht den Draw-Pfad fuer ferne NPCs (keine Lights_At,
+          # kein ground_eased, keine Per-Bone-Matrixmultiplikation,
+          # kein Shadow-Pass). NPC bleibt sichtbar.
+          # Rollback: WOTS2_CHARA_DRAW_SKIP_DIST=0 / WOTS2_CHARA_SHADOW_SKIP_DIST=0.
+          S=$(find_script wots2-chara-draw-lod.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
+                    || echo "  (wots2-chara-draw-lod.py nicht gefunden)"
+
           S=$(find_script wots2-chara-pose-pool.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
 
-          # ══ NEUER PATCH: MAP-BATCHING ══════════════════════════════
+          # ══ MAP-BATCHING ════════════════════════════════════════════
           # Modifiziert 4 Dateien (model.h, gs.h, model.cpp, gs.cpp).
           # Wird mit dem Repo-Root als Argument aufgerufen.
           S=$(find_script wots2-map-batching.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-map-batching.py nicht gefunden — alter Pfad)"
 
-          # ══ NEUER PATCH: NPC-SIM-DISTANZ ═══════════════════════════
+          # ══ NPC-SIM-DISTANZ ═════════════════════════════════════════
           # Modifiziert src/game/chara_mgr.cpp (Update / StepA..D / StepMap).
           # Idempotent, WOTS2_NPC_SIM_DIST=0 = aus.
           S=$(find_script wots2-npc-sim-distance.py)
