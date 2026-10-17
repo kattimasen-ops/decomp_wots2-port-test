@@ -219,10 +219,6 @@ jobs:
                     || echo "  (wots2-gs-lights-cap.py nicht gefunden)"
 
           # ══ BLOOM-OFF UND POST-OFF ══════════════════════════════════
-          # Zwei neue Env-Vars, die die Post-Processing-Kette abschalten.
-          # WOTS2_NO_BLOOM spart ~3,3 ms (nur Bloom).
-          # WOTS2_NO_POST spart ~9-12 ms (komplette Post-Kette + Depth-Write).
-          # Beide sind idempotent; Rollback per Env-Var unset.
           S=$(find_script wots2-gs-bloom-env.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-bloom-env.py nicht gefunden)"
@@ -272,6 +268,14 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-gs-frame-timing.py nicht gefunden)"
 
+          # ══ FRAME-TIMING (app main loop) ═══════════════════════════
+          # NEU: Aufschlüsselung der ungemessenen ~20-28 ms Basislast in
+          # app.cpp. Schreibt [atiming] alle 30 Frames, aktiviert via
+          # WOTS2_ATIMING=1. Idempotent. Erster Patch, der app.cpp anfasst.
+          S=$(find_script wots2-app-timing.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; } \
+                    || echo "  (wots2-app-timing.py nicht gefunden)"
+
           echo "== Patches fertig =="
 
       - name: Gepatchte Quelldateien sichern
@@ -293,6 +297,7 @@ jobs:
             "src/game/map_collision.cpp"
             "src/game/world_effects.cpp"
             "src/engine/motion.cpp"
+            "src/engine/app.cpp"
             "src/native/hle.cpp"
             "src/native/hle_chara.cpp"
             "src/native/model.cpp"
