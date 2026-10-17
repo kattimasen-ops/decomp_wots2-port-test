@@ -17,6 +17,8 @@
 #   WOTS2_TRACE_MERGE=0/1          Merge-Statistik ins stdout (Default: 0)
 #   WOTS2_NPC_LOD_DIST=N           LOD-2-Schwelle in Units (Default: 8)
 #   WOTS2_NPC_MAX_DIST=N           Harte NPC-Distanz, 0=aus (Default: 0)
+#   WOTS2_LIGHTS_MAX=N             Punktlichter pro Frame (Default: 4, 0=alle)
+#   WOTS2_NO_BUMP=0/1              Bump-Mapping aus (Default: 0)
 #   WOTS2_PERSISTENT_BUFFERS=0/1   NIEMALS auf 1 setzen (Default: 0)
 #   WOTS2_PAD_DIAG=0/1             Stick-Diagnose ins stderr (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
@@ -390,6 +392,14 @@ export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-8}"
 # Ein Wert um 18-22 hilft in der Stadt, laesst Figuren aber poppen.
 export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-0}"
 
+# Punktlichter pro Frame (wots2-gs-lights-cap.py). Default 4.
+# 0 = so viele wie der Shader hergibt (bis 16).
+export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-4}"
+
+# Bump-Mapping (wots2-gs-no-bump.py). Default 0 = aus.
+# 1 = bump_light() im Fragment-Shader uebersprungen (2-4 Lookups/px gespart).
+export WOTS2_NO_BUMP="${WOTS2_NO_BUMP:-0}"
+
 # Persistent buffers: NIEMALS auf 1 setzen. Der Patch liefert auf Mali-G31
 # undefinierte Vertex-Daten und macht das Bild schwarz/weiss.
 export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-0}"
@@ -425,9 +435,12 @@ log "  WOTS2_SHADER_CACHE=$WOTS2_SHADER_CACHE"
 log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
 log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
 log "  WOTS2_NO_MERGE=$WOTS2_NO_MERGE"
+log "  WOTS2_TRACE_MERGE=$WOTS2_TRACE_MERGE"
 log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
 log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST"
 log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST"
+log "  WOTS2_LIGHTS_MAX=$WOTS2_LIGHTS_MAX"
+log "  WOTS2_NO_BUMP=$WOTS2_NO_BUMP"
 log "  WOTS2_PERSISTENT_BUFFERS=$WOTS2_PERSISTENT_BUFFERS"
 log "  WOTS2_PAD_DIAG=$WOTS2_PAD_DIAG"
 log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
