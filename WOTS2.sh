@@ -22,6 +22,7 @@
 #   WOTS2_ATIMING=0/1               App-Loop-Timing [atiming] (Default: 1 für Analyse)
 #   WOTS2_NO_BLOOM=0/1              Bloom-Pass AUS (Default: 1 = aus)
 #   WOTS2_NO_POST=0/1               Komplette Post-Kette AUS (Default: unset)
+#   WOTS2_NO_VSYNC=0/1              V-Sync AUS (Default: 1; wird seit wots2-gs-novsync.py honoriert)
 #   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
 #
 # ── Zahlenwerte ──────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@
 #   WOTS2_NPC_SIM_DIST=N            Sim-Skip (Spieler-Distanz, Default: 20)
 #   WOTS2_CHARA_DRAW_SKIP_DIST=N    Draw-Pfad-Skip (Spieler-D., Default: 15)
 #   WOTS2_CHARA_SHADOW_SKIP_DIST=N  Shadow-Skip (Spieler-D., Default: 8)
+#   WOTS2_SWORD_DRAW_DIST=N         Schwert-Draw-Skip (Kamera-D., Default: 12; 999 = aus)
 #   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 1)
 #   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
 #   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.10)
@@ -401,6 +403,8 @@ export WOTS2_DATA_ROOT="$DATA_ROOT"
 export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 
 # ── RUNTIME-TUNING ───────────────────────────────────────────────────
+# V-Sync aus: seit wots2-gs-novsync.py wertet gs.cpp diese Variable endlich
+# aus (vorher wurde nur WOTS2_FAST gelesen). ~15 ms Ersparnis pro Frame.
 export WOTS2_NO_VSYNC=1
 export WOTS2_BUTTON_REMAP=1
 
@@ -448,12 +452,15 @@ unset WOTS2_PERSISTENT_BUFFERS
 #   Rest-Pose, kein Licht:          15 .. 18u
 #   mit Schatten (SHADOW_SKIP=8):    0 ..  7u
 #   simuliert (SIM_DIST=20):         0 .. 19u  (2u Puffer ueber Draw-Grenze)
+#   Schwert gezeichnet (SWORD_DRAW=12): 0 .. 12u Kamera-Distanz
 #
 # Rollback-Beispiele:
 #   WOTS2_NPC_MAX_DIST=30     ./WOTS2.sh   # weniger Pop-in
 #   WOTS2_CHARA_DRAW_SKIP_DIST=20 ./WOTS2.sh
 #   WOTS2_CHARA_SHADOW_SKIP_DIST=12 ./WOTS2.sh
 #   WOTS2_NPC_SIM_DIST=28     ./WOTS2.sh
+#   WOTS2_SWORD_DRAW_DIST=999 ./WOTS2.sh   # Schwerter immer zeichnen
+#   WOTS2_SWORD_DRAW_DIST=8   ./WOTS2.sh   # aggressiver (mehr sparen)
 #   WOTS2_LIGHTS_MAX=2        ./WOTS2.sh   # mehr Licht
 #   WOTS2_FX_SCALE=0.25       ./WOTS2.sh   # mehr Effekte
 #   WOTS2_NO_BLOOM=0          ./WOTS2.sh   # Bloom wieder an
@@ -467,6 +474,7 @@ export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-22}"
 export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-20}"
 export WOTS2_CHARA_DRAW_SKIP_DIST="${WOTS2_CHARA_DRAW_SKIP_DIST:-15}"
 export WOTS2_CHARA_SHADOW_SKIP_DIST="${WOTS2_CHARA_SHADOW_SKIP_DIST:-8}"
+export WOTS2_SWORD_DRAW_DIST="${WOTS2_SWORD_DRAW_DIST:-12}"
 export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-1}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
@@ -502,6 +510,7 @@ log_flag WOTS2_TIMING      "Frame-Timing an ([timing] + [gtiming] + [mtiming])"
 log_flag WOTS2_ATIMING     "App-Loop-Timing an ([atiming])"
 log_flag WOTS2_NO_BLOOM    "Bloom aus"
 log_flag WOTS2_NO_POST     "Komplette Post-Kette aus (sichtbar!)"
+log_flag WOTS2_NO_VSYNC    "V-Sync aus (Swap blockiert nicht mehr auf V-Blank)"
 if [ -n "${WOTS2_PERSISTENT_BUFFERS:-}" ]; then
     log "  WOTS2_PERSISTENT_BUFFERS=${WOTS2_PERSISTENT_BUFFERS}  ->  WARNUNG, sollte unset sein"
 else
@@ -518,6 +527,7 @@ log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST (Kamera-Distanz)"
 log "  WOTS2_NPC_SIM_DIST=$WOTS2_NPC_SIM_DIST (Spieler-Distanz, 0 = aus)"
 log "  WOTS2_CHARA_DRAW_SKIP_DIST=$WOTS2_CHARA_DRAW_SKIP_DIST (Spieler-Distanz, 0 = aus)"
 log "  WOTS2_CHARA_SHADOW_SKIP_DIST=$WOTS2_CHARA_SHADOW_SKIP_DIST (Spieler-Distanz, 0 = aus)"
+log "  WOTS2_SWORD_DRAW_DIST=$WOTS2_SWORD_DRAW_DIST (Kamera-Distanz, 999 = aus)"
 log "  WOTS2_LIGHTS_MAX=$WOTS2_LIGHTS_MAX"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 log ""
@@ -527,6 +537,7 @@ log "  voll animiert + beleuchtet:     0 .. $(( WOTS2_CHARA_DRAW_SKIP_DIST - 1 )
 log "  nur Rest-Pose, kein Licht:      $WOTS2_CHARA_DRAW_SKIP_DIST .. $(( WOTS2_NPC_MAX_DIST - 4 ))u"
 log "  mit Schatten:                   0 .. $(( WOTS2_CHARA_SHADOW_SKIP_DIST - 1 ))u"
 log "  simuliert (SIM_DIST):           0 .. $(( WOTS2_NPC_SIM_DIST - 1 ))u"
+log "  Schwert gezeichnet:             0 .. $(( WOTS2_SWORD_DRAW_DIST - 1 ))u Kamera-Distanz"
 
 log ""
 log "Bundle-Bibliotheken (libs.aarch64):"
@@ -811,7 +822,7 @@ if [ "$WOTS2_STATUS" -gt 128 ]; then
         4)  SIGNAME="SIGILL — Illegal Instruction" ;;
         6)  SIGNAME="SIGABRT — Abort" ;;
         7)  SIGNAME="SIGBUS — Bus Error" ;;
-        8)  SIGFPE_MSG="SIGFPE — Floating-Point Exception" ; SIGNAME="$SIGFPE_MSG" ;;
+        8)  SIGNAME="SIGFPE — Floating-Point Exception" ;;
         9)  SIGNAME="SIGKILL — hart abgeschossen" ;;
         11) SIGNAME="SIGSEGV — Segmentation Fault" ;;
         15) SIGNAME="SIGTERM — regulaer beendet" ;;
