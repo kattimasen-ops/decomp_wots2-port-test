@@ -14,7 +14,7 @@
 #   WOTS2_NO_BUMP=0/1               Bump-Mapping AUS (Default: 1 = aus)
 #   WOTS2_NO_SHADOW=0/1             Shadow-Pass AUS (Default: 0 = an)
 #   WOTS2_NO_MAP_BATCHING=0/1       Map-Batching AUS (Default: 0 = an)
-#   WOTS2_TRACE_CULL=0/1            Cull-Statistik ins stdout (Default: 1)
+#   WOTS2_TRACE_CULL=0/1            Cull-Statistik ins stdout (Default: 0 = aus)
 #   WOTS2_PERF_TRACE=0/1            Frame-Zeiten loggen (Default: 1)
 #   WOTS2_PAD_DIAG=0/1              Stick-Diagnose ins stderr (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1          Shader-Cache (Default: 1)
@@ -22,9 +22,9 @@
 #
 # ── Zahlenwerte ──────────────────────────────────────────────────────────
 #   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1 = jeden Frame)
-#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle in Units (Default: 4, wirkt derzeit nicht — Draw-Parameter wird ignoriert)
-#   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz, 0=aus (Default: 12)
-#   WOTS2_NPC_SIM_DIST=N            Simulations-Stillstand ab N Units, 0=aus (Default: 40)
+#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle (Default: 4, wirkt derzeit nicht — Draw-Parameter wird ignoriert)
+#   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz zur Kamera, 0=aus (Default: 30)
+#   WOTS2_NPC_SIM_DIST=N            Simulations-Stillstand ab N Units zum Spieler, 0=aus (Default: 0)
 #   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 2)
 #   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
 #   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.25)
@@ -413,7 +413,7 @@ wots2_export_flag WOTS2_NO_BATCH  0
 wots2_export_flag WOTS2_NO_BUMP   1
 wots2_export_flag WOTS2_NO_SHADOW 0
 wots2_export_flag WOTS2_NO_MAP_BATCHING 0
-wots2_export_flag WOTS2_TRACE_CULL  1
+wots2_export_flag WOTS2_TRACE_CULL  0
 wots2_export_flag WOTS2_PERF_TRACE  1
 wots2_export_flag WOTS2_PAD_DIAG    0
 wots2_export_flag WOTS2_SHADER_CACHE 1
@@ -422,28 +422,30 @@ unset WOTS2_PERSISTENT_BUFFERS
 # ── WOTS2-Zahlenwerte ────────────────────────────────────────────────────
 # WOTS2_SHADOW_INTERVAL=1: Shadow-Pass jeden Frame neu (kein Flackern)
 #
-# WOTS2_NPC_MAX_DIST=12    — Draw-Cull: NPCs jenseits 12 Units werden nicht
-#                            gezeichnet. Sichtbares Pop-in, aber Culling.
+# WOTS2_NPC_MAX_DIST=30    — Draw-Cull: NPCs jenseits 30 Kamera-Units
+#                            (~26 Spieler-Units) werden nicht gezeichnet.
+#                            Bei 12 war das Pop-in zu frueh; 30 laesst es
+#                            in der Ferne passieren.
 # WOTS2_NPC_LOD_DIST=4     — LOD-2-Schwelle. ACHTUNG: derzeit wirkungslos,
 #                            der CharaModels_Draw-Parameter wird ignoriert.
-#                            Wert bleibt für einen späteren Fix.
-# WOTS2_NPC_SIM_DIST=40    — Simulations-Stillstand: NPCs jenseits 40 Units
-#                            werden in Update/StepA..D/StepMap übersprungen
-#                            (Bewegung, AI, Animation frieren ein). Spieler,
-#                            gelockte Gegner und alle näheren NPCs laufen.
-#                            0 = aus. Bei Problemen auf 60 erhöhen.
+#                            Wert bleibt fuer einen spaeteren Fix.
+# WOTS2_NPC_SIM_DIST=0     — Simulations-Stillstand. AUS. Der v1-Patch
+#                            hatte einen Bug (stale cameraDistance liess
+#                            NPCs dauerhaft einfrieren); v2 misst gegen
+#                            den Spieler, ist aber noch nicht verbaut.
 # WOTS2_LIGHTS_MAX=2       — Punktlichter pro Frame (0..8 geklemmt).
 #
 # Rollback-Beispiele:
-#   WOTS2_NPC_MAX_DIST=0 WOTS2_NPC_SIM_DIST=0 ./WOTS2.sh
-#   WOTS2_NPC_MAX_DIST=20 WOTS2_NPC_SIM_DIST=60 ./WOTS2.sh
+#   WOTS2_NPC_MAX_DIST=12 ./WOTS2.sh          # Pop-in-Test aus alter Zeit
+#   WOTS2_NPC_MAX_DIST=0  ./WOTS2.sh          # Culling aus (Draw-Referenz)
+#   WOTS2_TRACE_CULL=1    ./WOTS2.sh          # Cull-Statistik wieder an
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.25}"
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
 export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-4}"
-export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-12}"
-export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-40}"
+export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-30}"
+export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-0}"
 export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-2}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
@@ -488,7 +490,7 @@ log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST (derzeit wirkungslos)"
 log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST"
-log "  WOTS2_NPC_SIM_DIST=$WOTS2_NPC_SIM_DIST"
+log "  WOTS2_NPC_SIM_DIST=$WOTS2_NPC_SIM_DIST (0 = aus)"
 log "  WOTS2_LIGHTS_MAX=$WOTS2_LIGHTS_MAX"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
