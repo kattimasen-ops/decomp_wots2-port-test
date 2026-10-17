@@ -22,18 +22,39 @@
 #   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
 #
 # ── Zahlenwerte ──────────────────────────────────────────────────────────
-#   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1 = jeden Frame)
-#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle (Default: 4, wirkt derzeit nicht)
-#   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz zur Kamera, 0=aus (Default: 30)
-#   WOTS2_NPC_SIM_DIST=N            Sim-Stillstand ab N Spieler-Units, 0=aus (Default: 28)
-#   WOTS2_CHARA_DRAW_SKIP_DIST=N    Draw-Pfad-Vereinfachung ab N Spieler-Units (Default: 20)
-#   WOTS2_CHARA_SHADOW_SKIP_DIST=N  Shadow-Skip ab N Spieler-Units (Default: 12)
-#   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 2)
+#   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1)
+#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle (Default: 4, wirkt nicht)
+#   WOTS2_NPC_MAX_DIST=N            Draw-Cull (Kamera-Distanz, Default: 22)
+#   WOTS2_NPC_SIM_DIST=N            Sim-Skip (Spieler-Distanz, Default: 20)
+#   WOTS2_CHARA_DRAW_SKIP_DIST=N    Draw-Pfad-Skip (Spieler-D., Default: 15)
+#   WOTS2_CHARA_SHADOW_SKIP_DIST=N  Shadow-Skip (Spieler-D., Default: 8)
+#   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 1)
 #   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
-#   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.25)
+#   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.10)
 #   WOTS2_SPLASH=N                  Splash-Dauer in Sekunden (Default: 2.5)
 #   WOTS2_KILL_TIMEOUT=N            Sekunden bis SIGKILL (Default: 3)
 #   WOTS2_LIBDIAG=0/1               LD_DEBUG-Probe (Default: 1)
+#
+# ── Frame-Timing: was gemessen wird ──────────────────────────────────────
+# Mit WOTS2_TIMING=1 gibt es drei Zeilen-Typen im wots2-stdout.txt:
+#
+#   [timing] 30 frames: update=... stepA=... stepB=... stepC=... stepD=...
+#                       stepMap=... draw=... total=... ms
+#     -> aus chara_mgr.cpp: die NPC-Pfad-Zeiten. "draw" ist die Zeit,
+#        um die Kommandoliste fuer alle NPCs zu bauen (CharaMgr_Draw).
+#
+#   [gtiming] 30 frames: record=... play=... lighting=... post=... loop=...
+#                        swap=... total=... ms
+#     -> aus gs.cpp: record = Zeit bis zur fertigen Kommandoliste,
+#        play = Zeit zum Abspielen (loop = play - lighting - post),
+#        swap = present() inkl. VBlank-Wait.
+#
+#   [mtiming] 30 frames: map=... npc=... other=... total=... ms
+#     -> aus model.cpp: Zeit in Model::draw, aufgeteilt nach Batch-Typ.
+#
+# Die drei Zeilen zusammen zeigen, wo die Frame-Zeit steckt. "record"
+# enthaelt "[timing].draw" und "[mtiming].total"; "play" ist die
+# GL-Ausfuehrung; "swap" ist der Limiter.
 #
 # ── Wichtiger Hinweis zu getenv() ────────────────────────────────────────
 # Der Port prüft seine Flags mit getenv(...) != nullptr. Deshalb werden
@@ -423,58 +444,48 @@ wots2_export_flag WOTS2_SHADER_CACHE 1
 wots2_export_flag WOTS2_TIMING      1
 unset WOTS2_PERSISTENT_BUFFERS
 
-# ── WOTS2-Zahlenwerte ────────────────────────────────────────────────────
-# WOTS2_SHADOW_INTERVAL=1: Shadow-Pass jeden Frame neu (kein Flackern)
+# ══════════════════════════════════════════════════════════════════════
+# WOTS2_FAST — zurzeit AUS (Diagnose-Modus wird nicht mehr gebraucht)
+# ══════════════════════════════════════════════════════════════════════
+# WOTS2_FAST schaltet den Frame-Limiter ab. Der Wert ist egal, nur das
+# Setzen zaehlt (getenv(...) != nullptr). Zum Aktivieren die naechste
+# Zeile einkommentieren — nicht auf 0 setzen.
 #
-# ── Distanz-Variablen: die wichtigste Kollision ─────────────────────────
-# MAX_DIST ist KAMERA-Distanz; die anderen drei sind SPIELER-Distanz.
-# Die Kamera sitzt ~3-4 Units hinter dem Spieler, also:
-#   Kamera-Distanz 30  ==  Spieler-Distanz ~26
-# Werte, die NICHT unter dieser Grenze liegen, feuern nie, weil der NPC
-# vorher schon von MAX_DIST weggecullt wird. Die konservativen Werte
-# unten sind bewusst so gewaehlt, dass sie im gezeichneten Band liegen:
+# Aus dem letzten Test: der Frame-Limiter kostet in den Menues ~21 ms
+# pro Frame (80 FPS mit FAST, 30 FPS ohne). Im Spiel ist die echte
+# Arbeit schon laenger als 33 ms, deshalb bringt FAST dort nichts.
+# # export WOTS2_FAST=1
+
+# ── WOTS2-Zahlenwerte: MAX-PERFORMANCE-PRESET ───────────────────────────
+# Die folgenden Werte sind auf maximale FPS getrimmt, mit bewussten
+# visuellen Kompromissen. Wenn dir das zu aggressiv ist, siehe die
+# Rollback-Beispiele unten.
 #
-#   MAX_DIST=30 (Kamera)      -> zeichnet Spieler-Distanz < 26
-#   DRAW_SKIP_DIST=20 (Spieler) -> feuert bei 20-26, also bei den
-#                                  aeusseren 6 Units des sichtbaren Bands
-#   SHADOW_SKIP_DIST=12 (Spieler) -> feuert bei 12-26, also bei allen
-#                                  NPCs ausserhalb des direkten Umfelds
-#   SIM_DIST=28 (Spieler)     -> deckt das gezeichnete Band fast komplett,
-#                                ohne dass sichtbare NPCs einfrieren
-#                                (die 2-Unit-Luecke zu MAX_DIST ist Puffer).
-#
-# WOTS2_TIMING=1: Frame-Timing an (Default: an). Der Patch schreibt alle
-# 30 Frames eine [timing]-Zeile nach stdout mit den Zeiten in ms fuer:
-#   update   - CharaMgr_Update (Control-Steps, Body-Update, Motion, Sound)
-#   stepA    - CharaMgr_StepA (nur BeginFrame-Flag-Setzen)
-#   stepB    - CharaMgr_StepB (StepB-VCall + Chara_fn1cccf0)
-#   stepC    - CharaMgr_StepC (Chara_fn1cec20)
-#   stepD    - CharaMgr_StepD (StepD-VCall)
-#   stepMap  - CharaMgr_StepMap (Map-Kollision pro NPC)
-#   draw     - CharaMgr_Draw (CharaModels_Draw inkl. Skinning/GL-Calls)
-#   total    - Summe aller sieben
-# Overhead: ~1 us/Frame. Rollback: WOTS2_TIMING=0.
-#
-# WOTS2_NPC_LOD_DIST=4     — LOD-2-Schwelle. ACHTUNG: derzeit wirkungslos.
-# WOTS2_LIGHTS_MAX=2       — Punktlichter pro Frame (0..8 geklemmt).
+# Distanz-Baender mit diesen Werten (Kamera ~3.5u hinter Spieler):
+#   gezeichnet (MAX_DIST=22):        0 .. 18u Spieler-Distanz
+#   voll animiert (DRAW_SKIP=15):    0 .. 14u
+#   Rest-Pose, kein Licht:          15 .. 18u
+#   mit Schatten (SHADOW_SKIP=8):    0 ..  7u
+#   simuliert (SIM_DIST=20):         0 .. 19u  (2u Puffer ueber Draw-Grenze)
 #
 # Rollback-Beispiele:
-#   WOTS2_NPC_MAX_DIST=0  ./WOTS2.sh          # Draw-Cull aus, alles zeichnen
-#   WOTS2_NPC_SIM_DIST=0  ./WOTS2.sh          # Sim-Skip aus
-#   WOTS2_CHARA_DRAW_SKIP_DIST=0  ./WOTS2.sh  # Draw-Pfad-Skip aus
-#   WOTS2_CHARA_SHADOW_SKIP_DIST=0 ./WOTS2.sh # Shadow-Skip aus
-#   WOTS2_TIMING=0        ./WOTS2.sh          # Timing aus (etwas schneller)
-#   WOTS2_TRACE_CULL=1    ./WOTS2.sh          # Cull-Statistik wieder an
+#   WOTS2_NPC_MAX_DIST=30     ./WOTS2.sh   # weniger Pop-in
+#   WOTS2_CHARA_DRAW_SKIP_DIST=20 ./WOTS2.sh
+#   WOTS2_CHARA_SHADOW_SKIP_DIST=12 ./WOTS2.sh
+#   WOTS2_NPC_SIM_DIST=28     ./WOTS2.sh
+#   WOTS2_LIGHTS_MAX=2        ./WOTS2.sh   # mehr Licht
+#   WOTS2_FX_SCALE=0.25       ./WOTS2.sh   # mehr Effekte
+#   WOTS2_TIMING=0            ./WOTS2.sh   # Timing aus (etwas schneller)
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
-export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.25}"
+export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.10}"
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
 export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-4}"
-export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-30}"
-export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-28}"
-export WOTS2_CHARA_DRAW_SKIP_DIST="${WOTS2_CHARA_DRAW_SKIP_DIST:-20}"
-export WOTS2_CHARA_SHADOW_SKIP_DIST="${WOTS2_CHARA_SHADOW_SKIP_DIST:-12}"
-export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-2}"
+export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-22}"
+export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-20}"
+export WOTS2_CHARA_DRAW_SKIP_DIST="${WOTS2_CHARA_DRAW_SKIP_DIST:-15}"
+export WOTS2_CHARA_SHADOW_SKIP_DIST="${WOTS2_CHARA_SHADOW_SKIP_DIST:-8}"
+export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-1}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -505,7 +516,12 @@ log_flag WOTS2_TRACE_CULL  "Cull-Statistik an"
 log_flag WOTS2_PERF_TRACE  "Perf-Trace an"
 log_flag WOTS2_PAD_DIAG    "Stick-Diagnose an"
 log_flag WOTS2_SHADER_CACHE "Shader-Cache an"
-log_flag WOTS2_TIMING      "Frame-Timing an"
+log_flag WOTS2_TIMING      "Frame-Timing an ([timing] + [gtiming] + [mtiming])"
+if [ -n "${WOTS2_FAST:-}" ]; then
+    log "  WOTS2_FAST=${WOTS2_FAST}  ->  Frame-Limiter AUS (Diagnose-Modus!)"
+else
+    log "  WOTS2_FAST=(unset)  ->  Frame-Limiter an"
+fi
 if [ -n "${WOTS2_PERSISTENT_BUFFERS:-}" ]; then
     log "  WOTS2_PERSISTENT_BUFFERS=${WOTS2_PERSISTENT_BUFFERS}  ->  WARNUNG, sollte unset sein"
 else
@@ -531,9 +547,6 @@ log "  voll animiert + beleuchtet:     0 .. $(( WOTS2_CHARA_DRAW_SKIP_DIST - 1 )
 log "  nur Rest-Pose, kein Licht:      $WOTS2_CHARA_DRAW_SKIP_DIST .. $(( WOTS2_NPC_MAX_DIST - 4 ))u"
 log "  mit Schatten:                   0 .. $(( WOTS2_CHARA_SHADOW_SKIP_DIST - 1 ))u"
 log "  simuliert (SIM_DIST):           0 .. $(( WOTS2_NPC_SIM_DIST - 1 ))u"
-log "  HINWEIS: Wenn SIM_DIST > (MAX_DIST - 4), laufen NPCs zwischen"
-log "           (MAX_DIST-4) und SIM_DIST simuliert, aber ungezeichnet."
-log "           Das ist gewollt (frisch beim Reinlaufen), kostet aber CPU."
 
 log ""
 log "Bundle-Bibliotheken (libs.aarch64):"
@@ -832,22 +845,34 @@ if [ -n "${WOTS2_PERF_TRACE:-}" ] && [ -s "$WOTS2_STDOUT" ]; then
     PERF_LINES=$(grep -c '^\[perf\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
     CULL_LINES=$(grep -c '^\[cull\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
     TIMING_LINES=$(grep -c '^\[timing\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
+    GTIMING_LINES=$(grep -c '^\[gtiming\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
+    MTIMING_LINES=$(grep -c '^\[mtiming\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
     log ""
-    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES timing=$TIMING_LINES"
+    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES timing=$TIMING_LINES gtiming=$GTIMING_LINES mtiming=$MTIMING_LINES"
     if [ "$PERF_LINES" -gt 0 ]; then
         log ""
         log "Letzte 20 [perf]-Zeilen:"
         grep '^\[perf\]' "$WOTS2_STDOUT" | tail -20 | log_pipe
     fi
-    if [ "$CULL_LINES" -gt 0 ]; then
+    if [ "$GTIMING_LINES" -gt 0 ]; then
         log ""
-        log "Letzte 5 [cull]-Zeilen:"
-        grep '^\[cull\]' "$WOTS2_STDOUT" | tail -5 | log_pipe
+        log "Letzte 10 [gtiming]-Zeilen:"
+        grep '^\[gtiming\]' "$WOTS2_STDOUT" | tail -10 | log_pipe
+    fi
+    if [ "$MTIMING_LINES" -gt 0 ]; then
+        log ""
+        log "Letzte 10 [mtiming]-Zeilen:"
+        grep '^\[mtiming\]' "$WOTS2_STDOUT" | tail -10 | log_pipe
     fi
     if [ "$TIMING_LINES" -gt 0 ]; then
         log ""
         log "Letzte 10 [timing]-Zeilen:"
         grep '^\[timing\]' "$WOTS2_STDOUT" | tail -10 | log_pipe
+    fi
+    if [ "$CULL_LINES" -gt 0 ]; then
+        log ""
+        log "Letzte 5 [cull]-Zeilen:"
+        grep '^\[cull\]' "$WOTS2_STDOUT" | tail -5 | log_pipe
     fi
 fi
 
