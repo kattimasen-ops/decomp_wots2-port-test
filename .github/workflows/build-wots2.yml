@@ -266,17 +266,26 @@ jobs:
           S=$(find_script wots2-neon-particles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; }
 
-          # (13) GPU MEDIUMP (Hardware-Anpassung)
           S=$(find_script wots2-gs-mediump.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # (14) GPU NO MIPMAP (Hardware-Anpassung)
           S=$(find_script wots2-gs-no-mipmap.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # (15) GPU FAST VBO (Hardware-Anpassung)
           S=$(find_script wots2-gs-fast-vbo.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+
+          # (16) Backface Culling
+          S=$(find_script wots2-gs-backface-cull.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+
+          # (17) Texture Cache
+          S=$(find_script wots2-gs-tex-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+
+          # (18) Shadow Map Size
+          S=$(find_script wots2-reduce-shadow.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; }
 
           echo "== Patches fertig =="
 
