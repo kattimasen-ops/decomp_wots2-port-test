@@ -231,21 +231,25 @@ jobs:
 
           # ══ NEUE PERFORMANCE-PATCHES ═══════════════════════════════
 
-          # (1) V-Sync aus
           S=$(find_script wots2-gs-novsync.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # (2) Schwerter für ferne NPCs überspringen
           S=$(find_script wots2-sword-draw-dist.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
 
-          # (3) Skeleton_Swing für gecullte NPCs überspringen
           S=$(find_script wots2-skeleton-swing-skip.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; }
 
-          # (4) HUD-Text-Schatten entfernen (massive Draw-Call-Ersparnis)
           S=$(find_script wots2-hud-fast-text.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/hud.cpp; }
+
+          # (5) Sichtlinien-Cache (spart massiv CPU bei NPC-KI)
+          S=$(find_script wots2-collision-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_tasks.cpp; }
+
+          # (6) Schnellere Fades (spart ~130 Draw-Calls beim Übergang)
+          S=$(find_script wots2-fast-fades.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; }
 
           echo "== Patches fertig =="
 
@@ -272,6 +276,7 @@ jobs:
             "src/engine/app.cpp"
             "src/native/hle.cpp"
             "src/native/hle_chara.cpp"
+            "src/native/hle_tasks.cpp"
             "src/native/model.cpp"
             "include/native/model.h"
             "include/hal/gs.h"
