@@ -218,7 +218,6 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-lights-cap.py nicht gefunden)"
 
-          # ══ BLOOM-OFF UND POST-OFF ══════════════════════════════════
           S=$(find_script wots2-gs-bloom-env.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-bloom-env.py nicht gefunden)"
@@ -239,7 +238,6 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
-          # ══ NPC-DRAW-PFAD-LOD ══════════════════════════════════════
           S=$(find_script wots2-chara-draw-lod.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-draw-lod.py nicht gefunden)"
@@ -248,40 +246,47 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
 
-          # ══ MAP-BATCHING ════════════════════════════════════════════
           S=$(find_script wots2-map-batching.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-map-batching.py nicht gefunden — alter Pfad)"
 
-          # ══ NPC-SIM-DISTANZ ═════════════════════════════════════════
           S=$(find_script wots2-npc-sim-distance.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-npc-sim-distance.py nicht gefunden)"
 
-          # ══ FRAME-TIMING (chara_mgr) ════════════════════════════════
           S=$(find_script wots2-frame-timing.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-frame-timing.py nicht gefunden)"
 
-          # ══ FRAME-TIMING (gs + model) ══════════════════════════════
           S=$(find_script wots2-gs-frame-timing.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-gs-frame-timing.py nicht gefunden)"
 
-          # ══ FRAME-TIMING (app main loop) ═══════════════════════════
           S=$(find_script wots2-app-timing.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; } \
                     || echo "  (wots2-app-timing.py nicht gefunden)"
 
-          # ══ V-SYNC AUS ══════════════════════════════════════════════
-          # WOTS2_NO_VSYNC wurde von gs.cpp bisher ignoriert (nur WOTS2_FAST).
-          # Mit WOTS2_NO_VSYNC=1 setzt der Patch SDL_GL_SetSwapInterval(0)
-          # an beiden Call-Sites — die 15 ms V-Blank-Blockade im Swap fällt
-          # damit weg. Idempotent, kein Rollback-Env nötig (nur WOTS2_NO_VSYNC
-          # unset lässt den Default: V-Sync an).
+          # ══ NEUE PATCHE (Batch 1: 3x sicher) ═══════════════════════
+
+          # (1) V-Sync aus: gs.cpp las nur WOTS2_FAST, nicht WOTS2_NO_VSYNC.
+          # Effekt: SDL_GL_SetSwapInterval(0) → die ~15 ms V-Blank-Blockade
+          # im Swap fällt weg. Größter Einzelhebel (~15 ms).
           S=$(find_script wots2-gs-novsync.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-novsync.py nicht gefunden)"
+
+          # (2) Schwerter für ferne NPCs überspringen. Default 999 = aus
+          # (identisches Verhalten). WOTS2_SWORD_DRAW_DIST=12 spart ~2-3 ms.
+          S=$(find_script wots2-sword-draw-dist.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
+                    || echo "  (wots2-sword-draw-dist.py nicht gefunden)"
+
+          # (3) Skeleton_Swing nur für tatsächlich gezeichnete NPCs. Für
+          # gecullte NPCs werden die Swing-Bones in Chara_StepMap ohnehin
+          # nächsten Frame neu berechnet. ~0.3 ms.
+          S=$(find_script wots2-skeleton-swing-skip.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
+                    || echo "  (wots2-skeleton-swing-skip.py nicht gefunden)"
 
           echo "== Patches fertig =="
 
