@@ -160,7 +160,8 @@ jobs:
 
           echo "  (wots2-persistent-buffers.py — AUS, Ursache des schwarzen Bildes)"
           echo "  (wots2-merge-3d-draws.py — AUS: kann strukturell nie greifen)"
-          echo "  (wots2-gs-orphan-vbo.py — AUS: auf Mali-G31 viel langsamer als glBufferData)"
+          echo "  (wots2-gs-orphan-vbo.py — AUS: auf Mali-G31 40× langsamer)"
+          echo "  (wots2-chara-shadow-interval.py — AUS: Schatten flackerte)"
 
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
@@ -238,15 +239,10 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
-          # Pose-Pool v2 (statische Puffer, kein malloc)
+          # Pose-Pool v2
           S=$(find_script wots2-chara-pose-pool.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
-
-          # Shadow-Interval: weniger Shadow-Redraws
-          S=$(find_script wots2-chara-shadow-interval.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
-                    || echo "  (wots2-chara-shadow-interval.py nicht gefunden)"
 
           echo "== Patches fertig =="
 
