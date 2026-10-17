@@ -3,27 +3,16 @@
 patches/wots2-npc-max-dist.py
 
 Harte Distanz-Cull fuer NPCs in src/game/chara.cpp.
-
-Hintergrund:
-  CharaOther_Cull laesst bisher alle NPCs durch, deren cameraDistance
-  groesser ist als `nearest` (der Abstand des naechsten Feindes). Bei
-  vielen NPCs ist das kein wirksamer Filter.
-
-  Diese Erweiterung fuegt eine optionale harte Obergrenze hinzu:
-  WOTS2_NPC_MAX_DIST=N. Default 0 = aus (das Verhalten bleibt wie
-  bisher). Ein Wert um 18-22 hilft in der Stadt, laesst aber Figuren
-  aus dem Sichtfeld poppen.
+WOTS2_NPC_MAX_DIST=N. Default 0 = aus.
 
 Idempotent ueber Marker 'wots2-npc-max-dist.py'.
 
 Zieldatei: src/game/chara.cpp
-Aufruf:    python3 patches/wots2-npc-max-dist.py src/game/chara.cpp
 
 Python 3.6+ kompatibel.
 """
 import sys
 import pathlib
-
 
 MARKER = "wots2-npc-max-dist.py"
 
@@ -51,7 +40,6 @@ NEW = '''static int CharaOther_Cull(float nearest, Chara* self, int pass) {
 }
 '''
 
-
 def patch(path):
     p = pathlib.Path(path)
     t = p.read_text()
@@ -64,7 +52,6 @@ def patch(path):
     t = t.replace(OLD, NEW, 1)
     p.write_text(t)
     print('  NPC-Max-Dist eingebaut (WOTS2_NPC_MAX_DIST, Default 0=aus).')
-
 
 if __name__ == '__main__':
     target = sys.argv[1] if len(sys.argv) > 1 else 'src/game/chara.cpp'
