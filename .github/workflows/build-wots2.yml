@@ -119,71 +119,48 @@ jobs:
             else echo ""; fi
           }
 
-          # ════════════════════════════════════════════════════════════
-          # BESTEHENDE PATCHES (unveraendert)
-          # ════════════════════════════════════════════════════════════
-
-          # ── Shader-Version auf GLES 3.2 ─────────────────────────────
+          # ══ BESTEHENDE PATCHES ══════════════════════════════════════
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # ── mediump-Qualifier ───────────────────────────────────────
           S=$(find_script wots2-gles-precision.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gles-precision.py nicht gefunden)"
 
-          # ── NEON v3 (Culling-Fix) ───────────────────────────────────
           S=$(find_script wots2-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # ── glTexStorage2D ──────────────────────────────────────────
           S=$(find_script wots2-gs-tex-storage.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-tex-storage.py nicht gefunden)"
 
-          # ── glInvalidateFramebuffer ─────────────────────────────────
           S=$(find_script wots2-gs-invalidate.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-invalidate.py nicht gefunden)"
 
-          # ── Shader-Cache v2 (link() ersetzt) ────────────────────────
           S=$(find_script wots2-gs-shader-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-shader-cache.py nicht gefunden)"
 
-          # ── 2D-Batching v3 ──────────────────────────────────────────
           S=$(find_script wots2-gs-batch-2d.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-batch-2d.py nicht gefunden)"
 
-          # ── Splash (v2, nur gs.cpp) ─────────────────────────────────
           S=$(find_script wots2-gs-splash.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-splash.py nicht gefunden)"
 
-          # ── Diagnose init() + ES 3.2 ────────────────────────────────
           S=$(find_script wots2-gs-init-diag.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-init-diag.py nicht gefunden)"
 
-          # ── Punktlichter von 16 auf 8 ───────────────────────────────
           S=$(find_script wots2-gs-combat.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-combat.py nicht gefunden)"
 
-          # ── Perf-Trace (nur mit WOTS2_PERF_TRACE=1 aktiv) ───────────
-          S=$(find_script wots2-gs-perf-trace.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-perf-trace.py nicht gefunden)"
-
-          # ════════════════════════════════════════════════════════════
-          # AUS (bestaetigt kaputt): wots2-persistent-buffers.py
-          #   glMapBufferRange auf Mali-G31 liefert undefinierte
-          #   Vertex-Daten. Ursache des schwarzen/weissen Bildes.
-          # ════════════════════════════════════════════════════════════
           echo "  (wots2-persistent-buffers.py — AUS, Ursache des schwarzen Bildes)"
+          echo "  (wots2-merge-3d-draws.py — AUS, greift nie wegen Bias/Overlay dazwischen)"
 
-          # ── Kollision ───────────────────────────────────────────────
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
 
@@ -191,7 +168,6 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; } \
                     || echo "  (wots2-collision-relative-neon.py nicht gefunden)"
 
-          # ── Caches ──────────────────────────────────────────────────
           S=$(find_script wots2-chara-resources-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara_resources.cpp; } \
                     || echo "  (wots2-chara-resources-cache.py nicht gefunden)"
@@ -208,73 +184,72 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; } \
                     || echo "  (wots2-map-collision-cell-cache.py nicht gefunden)"
 
-          # ── FX-Scale ────────────────────────────────────────────────
           S=$(find_script wots2-fx-scale.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
                     || echo "  (wots2-fx-scale.py nicht gefunden)"
 
-          # ── motion.cpp NEON ─────────────────────────────────────────
           S=$(find_script wots2-motion-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/motion.cpp; } \
                     || echo "  (wots2-motion-neon.py nicht gefunden)"
 
-          # ── pad.cpp: A<->B, X<->Y (M9 Pro / R36S) ───────────────────
           S=$(find_script wots2-pad-swap.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/pad.cpp; } \
-                    || echo "  (wots2-pad-swap.py nicht gefunden — uebersprungen)"
+                    || echo "  (wots2-pad-swap.py nicht gefunden)"
 
-          # ── port_options.h Defaults ─────────────────────────────────
           S=$(find_script patch_config_defaults.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (patch_config_defaults.py nicht gefunden)"
 
-          # ════════════════════════════════════════════════════════════
-          # NEUE PATCHES (Flaschenhals-Optimierung)
-          # ════════════════════════════════════════════════════════════
-
-          # ── 3D-Draw-Merge ───────────────────────────────────────────
-          # Fasst aufeinanderfolgende draw_mesh()-Aufrufe mit gleicher
-          # Textur/Primitive/Owner zusammen. Weniger glBufferData und
-          # glDrawArrays; TriangleStrips mit Degenerate-Stitch.
-          # WOTS2_NO_MERGE=1 schaltet ab.
-          S=$(find_script wots2-merge-3d-draws.py)
+          # ══ NEUE PATCHES ════════════════════════════════════════════
+          # Perf-Trace v3 (Frame-Zeit + Draw/Cull-Zahlen)
+          S=$(find_script wots2-gs-perf-trace-v3.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-merge-3d-draws.py nicht gefunden)"
+                    || echo "  (wots2-gs-perf-trace-v3.py nicht gefunden)"
 
-          # ── Bump-Mapping abschaltbar ────────────────────────────────
-          # WOTS2_NO_BUMP=1 zwingt uBump.x=0, bump_light() wird im
-          # Fragment-Shader uebersprungen (2-4 Texture-Lookups/px).
+          # State-Dedup (Bias/Overlay)
+          S=$(find_script wots2-gs-state-dedup.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-state-dedup.py nicht gefunden)"
+
+          # Orphan-VBO
+          S=$(find_script wots2-gs-orphan-vbo.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-orphan-vbo.py nicht gefunden)"
+
+          # Bump-Mapping abschaltbar
           S=$(find_script wots2-gs-no-bump.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-no-bump.py nicht gefunden)"
 
-          # ── Punktlichter-Limit ──────────────────────────────────────
-          # WOTS2_LIGHTS_MAX=N (Default 4): wie viele Punktlichter pro
-          # Frame an den Shader hochgeladen werden. Der Shader iteriert
-          # bis uLights, das C++ setzt es. Weniger Pixel-Arbeit im Map-Pass.
+          # Punktlichter-Limit
           S=$(find_script wots2-gs-lights-cap.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-lights-cap.py nicht gefunden)"
 
-          # ── NPC-LOD naeher ──────────────────────────────────────────
-          # LOD-2-Umschaltschwelle von 12.0 auf 8.0 Weltunits.
-          # WOTS2_NPC_LOD_DIST=N setzt sie.
+          # NPC-LOD
           S=$(find_script wots2-npc-lod-closer.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
                     || echo "  (wots2-npc-lod-closer.py nicht gefunden)"
 
-          # ── NPC-Max-Dist (optional, Default aus) ────────────────────
-          # WOTS2_NPC_MAX_DIST=N: harte Obergrenze. 0 = aus.
+          # NPC-Max-Dist (optional)
           S=$(find_script wots2-npc-max-dist.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
                     || echo "  (wots2-npc-max-dist.py nicht gefunden)"
 
-          # ── NEON mat_mul in hle.cpp ─────────────────────────────────
-          # 4 Zeilen-Akkumulatoren mit vmlaq_n_f32 statt 64 Skalar-Mults.
-          # Bitidentisch; die heisseste Matrix-Funktion im Port.
+          # NEON mat_mul in hle.cpp
           S=$(find_script wots2-hle-neon-matmul.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
+
+          # Pose-Pool
+          S=$(find_script wots2-chara-pose-pool.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
+                    || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
+
+          # Shadow-Interval
+          S=$(find_script wots2-chara-shadow-interval.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
+                    || echo "  (wots2-chara-shadow-interval.py nicht gefunden)"
 
           echo "== Patches fertig =="
 
@@ -343,7 +318,6 @@ jobs:
           cd dist
           tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh README.md 2>/dev/null || \
             tar -czf wots2-rk3326.tar.gz wots2 WOTS2.sh
-          echo "== tar =="
           tar -tzf wots2-rk3326.tar.gz | head -40
           ls -la
 
