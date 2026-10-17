@@ -230,7 +230,7 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
-          # ══ NEUER PATCH: NPC-DRAW-PFAD-LOD ══════════════════════════
+          # ══ NPC-DRAW-PFAD-LOD ══════════════════════════════════════
           # Muss VOR chara-pose-pool.py laufen: chara-draw-lod erwartet
           # die unveraenderten pose/headPose-Loops in hle_chara.cpp.
           S=$(find_script wots2-chara-draw-lod.py)
@@ -242,6 +242,9 @@ jobs:
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
 
           # ══ MAP-BATCHING ════════════════════════════════════════════
+          # Modifiziert 4 Dateien (model.h, gs.h, model.cpp, gs.cpp).
+          # Muss VOR den Timing-Patches laufen, weil die den finalen
+          # Stand von gs.cpp und model.cpp messen wollen.
           S=$(find_script wots2-map-batching.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-map-batching.py nicht gefunden — alter Pfad)"
@@ -251,16 +254,21 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-npc-sim-distance.py nicht gefunden)"
 
-          # ══ FRAME-TIMING ════════════════════════════════════════════
-          # Misst die Zeit in jedem CharaMgr-Schritt. Loggt alle 30 Frames
-          # eine [timing]-Zeile mit update/stepA-D/stepMap/draw in ms.
-          # Kein Eingriff in die Spiellogik. Default: an.
-          # Rollback: WOTS2_TIMING=0 in der WOTS2.sh.
-          # Muss NACH chara-mgr-find-cache und npc-sim-distance laufen,
-          # weil er die aktuellen Step-Loop-Ruempfe umklammert.
+          # ══ FRAME-TIMING (chara_mgr) ════════════════════════════════
+          # Misst CharaMgr_Update/StepA-D/StepMap/Draw. Loggt [timing].
           S=$(find_script wots2-frame-timing.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-frame-timing.py nicht gefunden)"
+
+          # ══ FRAME-TIMING (gs + model) ══════════════════════════════
+          # Misst in gs.cpp: record / play / lighting / post / swap.
+          # Misst in model.cpp: map / npc / other.
+          # Loggt [gtiming] und [mtiming].
+          # Muss NACH map-batching laufen (das modifiziert beide Dateien).
+          # Aktiv, wenn WOTS2_TIMING=1 (gleicher Env-Var wie chara_mgr).
+          S=$(find_script wots2-gs-frame-timing.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
+                    || echo "  (wots2-gs-frame-timing.py nicht gefunden)"
 
           echo "== Patches fertig =="
 
