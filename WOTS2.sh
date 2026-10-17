@@ -13,16 +13,15 @@
 #   WOTS2_NO_BATCH=0/1              2D-Batching AUS (Default: 0 = an)
 #   WOTS2_NO_BUMP=0/1               Bump-Mapping AUS (Default: 1 = aus)
 #   WOTS2_NO_SHADOW=0/1             Shadow-Pass AUS (Default: 0 = an)
-#   WOTS2_TRACE_MERGE=0/1           Merge-Statistik ins stdout (Default: 0)
+#   WOTS2_NO_MAP_BATCHING=0/1       Map-Batching AUS (Default: 0 = an)
 #   WOTS2_TRACE_CULL=0/1            Cull-Statistik ins stdout (Default: 1)
-#   WOTS2_TRACE_PAIR=0/1            Frame-Pairing-Statistik (Default: 0)
 #   WOTS2_PERF_TRACE=0/1            Frame-Zeiten loggen (Default: 1)
 #   WOTS2_PAD_DIAG=0/1              Stick-Diagnose ins stderr (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1          Shader-Cache (Default: 1)
 #   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
 #
 # ── Zahlenwerte ──────────────────────────────────────────────────────────
-#   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1 = aus)
+#   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1 = jeden Frame)
 #   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle in Units (Default: 6)
 #   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz, 0=aus (Default: 0)
 #   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 2)
@@ -412,9 +411,8 @@ wots2_export_flag WOTS2_NO_CULL   0
 wots2_export_flag WOTS2_NO_BATCH  0
 wots2_export_flag WOTS2_NO_BUMP   1
 wots2_export_flag WOTS2_NO_SHADOW 0
-wots2_export_flag WOTS2_TRACE_MERGE 0
+wots2_export_flag WOTS2_NO_MAP_BATCHING 0
 wots2_export_flag WOTS2_TRACE_CULL  1
-wots2_export_flag WOTS2_TRACE_PAIR  0
 wots2_export_flag WOTS2_PERF_TRACE  1
 wots2_export_flag WOTS2_PAD_DIAG    0
 wots2_export_flag WOTS2_SHADER_CACHE 1
@@ -454,9 +452,8 @@ log_flag WOTS2_NO_CULL    "Culling aus"
 log_flag WOTS2_NO_BATCH   "2D-Batching aus"
 log_flag WOTS2_NO_BUMP    "Bump-Mapping aus"
 log_flag WOTS2_NO_SHADOW  "Shadow-Pass aus"
-log_flag WOTS2_TRACE_MERGE "Merge-Statistik an"
+log_flag WOTS2_NO_MAP_BATCHING "Map-Batching aus"
 log_flag WOTS2_TRACE_CULL  "Cull-Statistik an"
-log_flag WOTS2_TRACE_PAIR  "Pairing-Statistik an"
 log_flag WOTS2_PERF_TRACE  "Perf-Trace an"
 log_flag WOTS2_PAD_DIAG    "Stick-Diagnose an"
 log_flag WOTS2_SHADER_CACHE "Shader-Cache an"
@@ -772,9 +769,8 @@ fi
 if [ -n "${WOTS2_PERF_TRACE:-}" ] && [ -s "$WOTS2_STDOUT" ]; then
     PERF_LINES=$(grep -c '^\[perf\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
     CULL_LINES=$(grep -c '^\[cull\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
-    MERGE_LINES=$(grep -c '^\[merge3d\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
     log ""
-    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES merge=$MERGE_LINES"
+    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES"
     if [ "$PERF_LINES" -gt 0 ]; then
         log ""
         log "Letzte 20 [perf]-Zeilen:"
