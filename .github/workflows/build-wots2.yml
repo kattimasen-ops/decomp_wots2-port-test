@@ -119,10 +119,7 @@ jobs:
             else echo ""; fi
           }
 
-          # ══════════════════════════════════════════════════════════
-          # BESTEHENDE PATCHES (unverändert)
-          # ══════════════════════════════════════════════════════════
-
+          # ══ BESTEHENDE PATCHES ══════════════════════════════════════
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
@@ -204,21 +201,18 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (patch_config_defaults.py nicht gefunden)"
 
-          # ══════════════════════════════════════════════════════════
-          # NEUE PATCHES (Flaschenhals-Optimierung)
-          # ══════════════════════════════════════════════════════════
-
-          # Perf-Trace v3: Frame-Zeit + Draw/Cull-Zahlen
+          # ══ NEUE PATCHES ════════════════════════════════════════════
+          # Perf-Trace v3
           S=$(find_script wots2-gs-perf-trace-v3.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-perf-trace-v3.py nicht gefunden)"
 
-          # State-Dedup: set_depth_bias/set_overlay nur bei Änderung
+          # State-Dedup v2 (statics am richtigen Ort)
           S=$(find_script wots2-gs-state-dedup.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-state-dedup.py nicht gefunden)"
 
-          # Orphan-VBO: glBufferSubData statt glBufferData pro Draw
+          # Orphan-VBO
           S=$(find_script wots2-gs-orphan-vbo.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-orphan-vbo.py nicht gefunden)"
@@ -233,12 +227,12 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-lights-cap.py nicht gefunden)"
 
-          # NPC-LOD-Schwelle näher
+          # NPC-LOD
           S=$(find_script wots2-npc-lod-closer.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
                     || echo "  (wots2-npc-lod-closer.py nicht gefunden)"
 
-          # NPC-Max-Dist (optional)
+          # NPC-Max-Dist
           S=$(find_script wots2-npc-max-dist.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
                     || echo "  (wots2-npc-max-dist.py nicht gefunden)"
@@ -248,12 +242,12 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
-          # Pose-Pool: kein vector-Alloc pro Frame in hle_chara.cpp
+          # Pose-Pool
           S=$(find_script wots2-chara-pose-pool.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
 
-          # Shadow-Interval: Shadow-Pass nur jeden N-ten Frame
+          # Shadow-Interval
           S=$(find_script wots2-chara-shadow-interval.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-shadow-interval.py nicht gefunden)"
