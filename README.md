@@ -60,10 +60,28 @@ The port has been booted on an M9 Pro (ArkOS4Clone 20260825) and confirmed to
 launch, load a save, walk through Amahara, run scripted scenes, play audio,
 and exit cleanly.
 
-**Honest caveat:** the interactive parts of the town are not yet running at a
-comfortable frame rate. Menus, cutscenes and scripted scenes are fine;
-walking around town with several NPCs visible still drops well below the
-target 30 FPS. See [Honest status](#honest-status).
+**Honest caveat:** the interactive parts of the town are not yet at a
+comfortable frame rate. Menus, cutscenes, scripted scenes, the dojo and the
+shops are fine — 25–30 FPS at 448×336 render resolution. **Walking around the
+open town with several NPCs visible drops to 14–19 FPS.** Two things make the
+open town slow, and only one of them is understood well enough to attack
+directly:
+
+- **A ~28 ms base load** that is present in every town frame regardless of
+  how much is drawn. Measured from `[perf]` and `[timing]` traces: at 58
+  draw calls the frame still takes 32.6 ms. That is the NPC simulation,
+  the skeleton updates, the motion player and the character skinning — not
+  draw-call overhead.
+- **~0.075 ms per draw call** on top of that. At 700 draw calls in a dense
+  part of town this adds ~50 ms, which is why the busiest scenes hit
+  12–15 FPS while quiet spots stay near 20.
+
+The current code changes have **reduced draw calls** (map batching brings
+~124 `glBufferData` calls down to ~15) and **skip work for distant NPCs**
+(beyond 20 player-units for the draw path, beyond 28 for the simulation),
+but neither heals the base load. The frame-timing patch
+(`wots2-frame-timing.py`) was added to measure exactly where those 28 ms go;
+the results will drive the next round of work. See [Honest status](#honest-status).
 
 ## What this port adds on the RK3326
 
@@ -108,6 +126,11 @@ ground up.
   primitive type are merged into a single `glDrawArrays`, including the
   font glyphs. ARM's guidance for Mali is to keep the frame under ~500 draw
   calls; this is where most of the menu and HUD overhead goes away.
+- **Map batching (`wots2-map-batching.py` v3)** — static map geometry is
+  gathered once per texture+bias into per-tile runs, with per-tile ranges
+  for culling. The `glBufferData` calls for the map drop from ~124 to ~15
+  in the open town, and each run carries its own bounding box so the renderer
+  can still cull it by frustum and fog distance.
 - **8 point lights per pixel, not 16.** The map's fragment shader used to
   loop over sixteen lanterns per pixel; the port caps that at eight, which
   is well past the point where the further lights contribute to the visible
@@ -116,6 +139,46 @@ ground up.
   `DRM_CAP_ASYNC_PAGE_FLIP` but rejects the actual `drmModePageFlip` call
   with `-EINVAL`; every frame is dropped and the picture tears. The build
   patches SDL2 to fall back to a synchronous flip for the session.
+
+**NPC culling — three independent levers, each with its own distance**
+
+The character manager runs several passes per frame per NPC (simulation,
+map collision, skeleton update, draw). On a busy town these add up. The port
+adds three distance-based skips, **all measured from the player**, which is
+why they are configured in a specific order — `MAX_DIST` measures from the
+*camera*, and the camera sits 3–4 units behind the player, so anything
+above `MAX_DIST − 4` in player units is already not drawn:
+
+- `WOTS2_NPC_MAX_DIST` (default **30**, camera distance) — the hard draw
+  cull. Anything further than this is not rendered at all. Setting it below
+  ~26 means you will see pop-in.
+- `WOTS2_CHARA_DRAW_SKIP_DIST` (default **20**, player distance) — NPCs
+  beyond this are still drawn but with a simplified draw path: no
+  `Lights_At` lookup, no `ground_eased`, no per-bone matrix multiplication
+  (they hold their rest pose), and no shadow pass. Visible but frozen and
+  statically lit. This must sit **below** `MAX_DIST − 4` or it never fires.
+- `WOTS2_CHARA_SHADOW_SKIP_DIST` (default **12**, player distance) — no
+  shadow pass for NPCs beyond this. Saves two draw calls per NPC.
+- `WOTS2_NPC_SIM_DIST` (default **28**, player distance) — no simulation
+  for NPCs beyond this. Their animations and motion player stop updating.
+  Must sit above `MAX_DIST − 4` or you get visible frozen NPCs in view.
+
+The `WOTS2.sh` prints the effective distance bands on launch so these can be
+checked against each other without reading the source.
+
+**Character pose pool (`wots2-chara-pose-pool.py` v3)** — the draw path used
+`std::vector<float>` for the pose and head-pose buffers; on this path that is
+up to two heap allocations per NPC per frame. v3 replaces them with static
+buffers guarded by a 64-bone sanity check. Small win, but it removes
+allocation jitter from the frame.
+
+**Frame timing (`wots2-frame-timing.py` v1)** — an `#ifdef`-style timing
+shim around every `CharaMgr_*` step (update, StepA–D, StepMap, Draw) that
+writes a `[timing]` line to stdout every 30 frames with the per-step
+milliseconds. Off-switch: `WOTS2_TIMING=0`. The overhead is ~1 µs per
+frame; it is on by default because the numbers are what the next round of
+optimisation has to be based on. This is the patch that produced the
+"~28 ms base load" figure above.
 
 **Runtime tuning**
 
@@ -156,7 +219,7 @@ ground up.
 Every change is implemented as a small, idempotent Python patch that runs
 from the CI workflow before `cmake` configures the build. The patches never
 touch the game's own source logic — they only extend the renderer, the
-collision world, and the launcher.
+collision world, the character pipeline and the launcher.
 
 ### Where the RK3326 is slow, and what the port does about it
 
@@ -164,12 +227,20 @@ collision world, and the launcher.
 |---|---|---|
 | **CPU, hot loops** | `-fprefetch-loop-arrays`, `-funroll-loops`, NEON vertex-lerp, NEON frustum culling, NEON collision matrix multiply, NEON direction normaliser, NEON pairwise `Relative()`. | `cmake/aarch64-arkos.cmake`, `patches/wots2-neon.py`, `patches/wots2-collision-neon.py`, `patches/wots2-collision-relative-neon.py` |
 | **GPU, bandwidth** | `glInvalidateFramebuffer` on depth and post-FBO, `glTexStorage2D` for framebuffer textures, AFBC enabled, async-buffer count bounded. | `patches/wots2-gs-invalidate.py`, `patches/wots2-gs-tex-storage.py`, `WOTS2.sh` |
-| **Draw calls** | 2D sprites sharing a texture batched into a single `glDrawArrays`; 3D meshes frustum-culled and fog-culled by their bounding box before the vertex-buffer upload. | `patches/wots2-gs-batch-2d.py`, `src/hal/gs.cpp` |
-| **Fragment-shader cost** | Map point lights capped at 8 per pixel instead of 16. | `patches/wots2-gs-combat.py` |
+| **Draw calls (3D)** | Map geometry batched per texture+bias into per-tile runs, with a bounding box per run for frustum and fog culling. `glBufferData` calls in the open town drop from ~124 to ~15. | `patches/wots2-map-batching.py` |
+| **Draw calls (2D)** | Successive 2D draws that share a texture and primitive type are merged into a single `glDrawArrays`, including font glyphs. | `patches/wots2-gs-batch-2d.py` |
+| **NPC draw path** | Distant NPCs (>20 player-units) are drawn with a simplified path: static light, no per-bone matrix, no ground light, no shadow. Still visible. | `patches/wots2-chara-draw-lod.py` |
+| **NPC shadow** | No shadow pass for NPCs beyond 12 player-units. Two draw calls saved per NPC. | `patches/wots2-chara-draw-lod.py` |
+| **NPC simulation** | No character simulation for NPCs beyond 28 player-units. Animation and motion player stop for those. | `patches/wots2-npc-sim-distance.py` |
+| **NPC hard draw cull** | Anything beyond 30 camera units is not drawn at all. | `patches/wots2-npc-max-dist.py` |
+| **Chara caches** | Find-cache in the character manager, resources cache, body last-position array, map-collision cell cache, list-indexed chara pose pool. | `patches/wots2-chara-mgr-find-cache.py`, `wots2-chara-resources-cache.py`, `wots2-chara-body-last-array.py`, `wots2-map-collision-cell-cache.py`, `wots2-chara-pose-pool.py` |
+| **Fragment-shader cost** | Map point lights capped at 8 per pixel instead of 16, then made runtime-tunable via `WOTS2_LIGHTS_MAX` (default 2). | `patches/wots2-gs-combat.py`, `patches/wots2-gs-lights-cap.py` |
+| **Effect spawn count** | World-effect spawn loops scaled by `WOTS2_FX_SCALE` (default 0.25). | `patches/wots2-fx-scale.py` |
 | **Scheduling jitter** | CPU and GPU governors pinned to `performance`, restored on exit; `tailscaled` stopped during play. | `WOTS2.sh` |
 | **Input mismatch** | PS2 button layout enforced in `pad.cpp`, independent of SDL's internal database. | `patches/wots2-pad-swap.py` |
 | **Memory pressure** | Glibc trim/mmap thresholds raised, ZRAM with `lz4`. | `WOTS2.sh` |
 | **Audio CPU** | SDL2 buffer raised to 2048 samples so the callback fires four times less often. | `WOTS2.sh` |
+| **Diagnosis** | `[perf]` line every 30 frames (draw calls, cull calls, ms, fps), `[cull]` line per frame when `WOTS2_TRACE_CULL=1`, `[timing]` line every 30 frames with per-step milliseconds. | `patches/wots2-gs-perf-trace-v3.py`, `patches/wots2-frame-timing.py` |
 
 ### Patches that are deliberately switched off
 
@@ -184,6 +255,20 @@ collision world, and the launcher.
   Practices, which recommends `glBufferSubData` and not `glMapBufferRange`
   for exactly this reason. `WOTS2.sh` exports
   `WOTS2_PERSISTENT_BUFFERS=0` and it must stay that way.
+- **`wots2-merge-3d-draws.py` — structurally impossible to help.** Each
+  `draw_mesh` has its own `Begin3D`/`End3D` pair, so the recording state's
+  owner changes on every mesh; the merge condition
+  `prev.owner == s_recOwner` is never true. Kept out of the workflow.
+- **`wots2-gs-orphan-vbo.py` — 40× slower on Mali-G31.** Bufer orphaning
+  is a desktop GL win that the Mali driver punishes. Measured at 0.4 FPS
+  instead of 15. Kept out of the workflow.
+- **`wots2-chara-shadow-interval.py` — flickering.** Skipping the shadow
+  pass every N frames made the shadow visibly pulse. Not built.
+- **`wots2-npc-lod-closer.py` — ineffective.** The parameter it adjusts
+  (`CharaModels_Draw(Chara*, int)`) is the draw *pass*, not the LOD. The
+  actual LOD selection lives in `CharaModels_Start(phase)`, which only
+  handles phases 0–2 (the port ships LOD 1 only). Kept in the repo as a
+  no-op but does not change the picture.
 
 ### Which optimisations came from where
 
@@ -243,4 +328,50 @@ Nothing from the disc is in this repository.
 **Prebuilt:** download the `wots2-rk3326` package from
 [Releases](https://github.com/kattimasen-ops/decomp_wots2-port-test/releases)
 or from the workflow artefact. Unpack it into the `ports` folder of your
-ArkOS4Clone SD card:
+ArkOS4Clone SD card.
+
+**From source:** the CI workflow (`.github/workflows/build-wots2.yml`) runs
+on GitHub Actions; a full build takes about 20 minutes on a standard runner.
+The only requirements on the runner side are `ubuntu-22.04` and the aarch64
+multiarch packages installed by the workflow — nothing needs to be installed
+locally.
+
+## Configuration
+
+`port.ini` (next to the binary) and the environment variables read by
+`WOTS2.sh` are the two tuning surfaces. The most useful ones:
+
+**Render**
+
+| Option | Default | Effect |
+|---|---|---|
+| `render` | `448x336` | Internal resolution. **The single biggest FPS lever.** `320x240` is the next stop. |
+| `fps` | `30` | Frame limiter. Higher values only make sense with the FPS-unlock mod. |
+| `shadows` | `0` | Modern shadow pass. On Mali-G31 it is expensive. |
+| `ao` | `0` | Screen-space ambient occlusion. |
+| `bloom` | `0.10` | Bloom strength. `0` disables the pass. |
+| `god_rays` | `0.00` | Sun shafts. Expensive. |
+
+**Runtime (in `WOTS2.sh`)**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `WOTS2_NPC_MAX_DIST` | `30` | NPC draw cull (camera distance). |
+| `WOTS2_CHARA_DRAW_SKIP_DIST` | `20` | NPCs beyond this (player distance) drawn with a simplified path. **Must stay below `MAX_DIST − 4`.** |
+| `WOTS2_CHARA_SHADOW_SKIP_DIST` | `12` | No shadow pass for NPCs beyond this (player distance). |
+| `WOTS2_NPC_SIM_DIST` | `28` | No character simulation for NPCs beyond this (player distance). |
+| `WOTS2_LIGHTS_MAX` | `2` | Point lights per pixel on the map, 0..8. |
+| `WOTS2_TIMING` | `1` | Frame-timing trace. Turn off if you want every microsecond back. |
+| `WOTS2_PERF_TRACE` | `1` | `[perf]` line every 30 frames. |
+| `WOTS2_TRACE_CULL` | `0` | `[cull]` line per frame. Very noisy; turn on only for investigation. |
+| `WOTS2_FX_SCALE` | `0.25` | World-effect spawn count scale. |
+
+**Rollback examples**
+
+```sh
+WOTS2_NPC_MAX_DIST=0  ./WOTS2.sh          # no NPC draw cull at all (reference)
+WOTS2_NPC_SIM_DIST=0  ./WOTS2.sh          # no NPC sim skip
+WOTS2_CHARA_DRAW_SKIP_DIST=0  ./WOTS2.sh  # full draw path for all NPCs
+WOTS2_CHARA_SHADOW_SKIP_DIST=0 ./WOTS2.sh # shadows for all NPCs
+WOTS2_TIMING=0        ./WOTS2.sh          # no timing trace
+WOTS2_TRACE_CULL=1    ./WOTS2.sh          # per-frame cull trace (noisy)
