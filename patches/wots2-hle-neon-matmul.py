@@ -1,23 +1,7 @@
 #!/usr/bin/env python3
 """
-patches/wots2-hle-neon-matmul.py
-
-Ersetzt mat_mul() in src/native/hle.cpp durch eine NEON-Variante
-(4 Zeilen-Linearkombinationen mit vmlaq_n_f32 statt 64 Skalar-Mults).
-
-mat_mul wird von Matrix_Multiply und Matrix_Rotate gerufen, und
-Matrix_Multiply ist die heisseste Funktion im Port: Skeleton_UpdateWorld
-ruft sie pro Bone pro Charakter pro Frame.
-
-Bitidentisch zum Skalar-Code (gleiche Additions-Reihenfolge pro
-Ausgabe-Element), nur mit FMA statt Mult+Add. Kein Spielverhalten
-aendert sich.
-
-Idempotent ueber Marker 'wots2-hle-neon-matmul.py'.
-
-Zieldatei: src/native/hle.cpp
-
-Python 3.6+ kompatibel.
+patches/wots2-hle-neon-matmul.py — NEON mat_mul in src/native/hle.cpp.
+Idempotent ueber Marker "wots2-hle-neon-matmul.py".
 """
 import sys
 import pathlib
@@ -33,12 +17,7 @@ OLD = '''static void mat_mul(const float* a, const float* b, float* out) {      
 }
 '''
 
-NEW = '''static void mat_mul(const float* a, const float* b, float* out) {      // out = a × b, row vectors
-    // wots2-hle-neon-matmul.py
-    // out[i][j] = sum_k a[i][k] * b[k][j]  (row-major, row-vector convention)
-    // Statt 64 Skalar-Mults + 48 Adds: vier Zeilen-Akkumulatoren mit
-    // vmlaq_n_f32, je Zeile vier FMA auf 128 Bit. Bitidentisch zum
-    // Skalar-Code, da die Summe in derselben Reihenfolge gebildet wird.
+NEW = '''static void mat_mul(const float* a, const float* b, float* out) {
 #if defined(__aarch64__)
     float r[16];
     for (int i = 0; i < 4; i++) {
@@ -67,11 +46,11 @@ def patch(path):
         print('  HLE-NEON-Matmul bereits vorhanden.')
         return
     if OLD not in t:
-        print('  FEHLER: mat_mul()-Block nicht gefunden.', file=sys.stderr)
+        print('  FEHLER: mat_mul nicht gefunden.', file=sys.stderr)
         sys.exit(1)
     t = t.replace(OLD, NEW, 1)
     p.write_text(t)
-    print('  HLE-NEON-Matmul eingebaut (mat_mul, 1 Stelle).')
+    print('  HLE-NEON-Matmul eingebaut.')
 
 if __name__ == '__main__':
     target = sys.argv[1] if len(sys.argv) > 1 else 'src/native/hle.cpp'
