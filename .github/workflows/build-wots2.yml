@@ -269,12 +269,19 @@ jobs:
                     || echo "  (wots2-gs-frame-timing.py nicht gefunden)"
 
           # ══ FRAME-TIMING (app main loop) ═══════════════════════════
-          # NEU: Aufschlüsselung der ungemessenen ~20-28 ms Basislast in
-          # app.cpp. Schreibt [atiming] alle 30 Frames, aktiviert via
-          # WOTS2_ATIMING=1. Idempotent. Erster Patch, der app.cpp anfasst.
           S=$(find_script wots2-app-timing.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; } \
                     || echo "  (wots2-app-timing.py nicht gefunden)"
+
+          # ══ V-SYNC AUS ══════════════════════════════════════════════
+          # WOTS2_NO_VSYNC wurde von gs.cpp bisher ignoriert (nur WOTS2_FAST).
+          # Mit WOTS2_NO_VSYNC=1 setzt der Patch SDL_GL_SetSwapInterval(0)
+          # an beiden Call-Sites — die 15 ms V-Blank-Blockade im Swap fällt
+          # damit weg. Idempotent, kein Rollback-Env nötig (nur WOTS2_NO_VSYNC
+          # unset lässt den Default: V-Sync an).
+          S=$(find_script wots2-gs-novsync.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-novsync.py nicht gefunden)"
 
           echo "== Patches fertig =="
 
