@@ -8,29 +8,62 @@
 #   gptokeyb wird mit "-k wots2" gestartet. Der Standard-Hotkey
 #   (Select+Start) beendet wots2 sauber.
 #
-# Steuerung:
-#   WOTS2_LIBDIAG=0/1              LD_DEBUG-Probe (Default: 1)
-#   WOTS2_FX_SCALE=N               Effekt-Anzahl (Default: 0.4)
-#   WOTS2_NO_CULL=0/1              Frustum-Culling aus (Default: 0)
-#   WOTS2_NO_BATCH=0/1             2D-Batching aus (Default: 0)
-#   WOTS2_NO_MERGE=0/1             3D-Draw-Merge aus (Default: 0)
-#   WOTS2_TRACE_MERGE=0/1          Merge-Statistik ins stdout (Default: 0)
-#   WOTS2_NPC_LOD_DIST=N           LOD-2-Schwelle in Units (Default: 8)
-#   WOTS2_NPC_MAX_DIST=N           Harte NPC-Distanz, 0=aus (Default: 0)
-#   WOTS2_LIGHTS_MAX=N             Punktlichter pro Frame (Default: 4, 0=alle)
-#   WOTS2_NO_BUMP=0/1              Bump-Mapping aus (Default: 0)
-#   WOTS2_PERSISTENT_BUFFERS=0/1   NIEMALS auf 1 setzen (Default: 0)
-#   WOTS2_PAD_DIAG=0/1             Stick-Diagnose ins stderr (Default: 0)
-#   WOTS2_SHADER_CACHE=0/1         Shader-Cache (Default: 1)
-#   WOTS2_SHADER_LRU=N             Frames bis Shader-Unload (Default: 120)
-#   WOTS2_SPLASH=N                 Splash-Dauer in Sekunden (Default: 2.5)
-#   WOTS2_KILL_TIMEOUT=N           Sekunden bis SIGKILL (Default: 3)
-#   WOTS2_PERF_TRACE=0/1           Frame-Zeiten loggen (Default: 0)
+# ── Flags, die mit 0/1 geschaltet werden ─────────────────────────────────
+#   WOTS2_NO_CULL=0/1               Frustum-Culling AUS (Default: 0 = Culling an)
+#   WOTS2_NO_BATCH=0/1              2D-Batching AUS (Default: 0 = Batching an)
+#   WOTS2_NO_MERGE=0/1              3D-Merge AUS (Default: 0 = an, v3)
+#   WOTS2_NO_BUMP=0/1               Bump-Mapping AUS (Default: 1 = aus)
+#   WOTS2_TRACE_MERGE=0/1           Merge-Statistik ins stdout (Default: 0)
+#   WOTS2_TRACE_CULL=0/1            Cull-Statistik ins stdout (Default: 0)
+#   WOTS2_TRACE_PAIR=0/1            Frame-Pairing-Statistik (Default: 0)
+#   WOTS2_PERF_TRACE=0/1            Frame-Zeiten loggen (Default: 0)
+#   WOTS2_PAD_DIAG=0/1              Stick-Diagnose ins stderr (Default: 0)
+#   WOTS2_SHADER_CACHE=0/1          Shader-Cache (Default: 1)
+#   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
+#
+# ── Zahlenwerte ──────────────────────────────────────────────────────────
+#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle in Units (Default: 8)
+#   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz, 0=aus (Default: 0)
+#   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 4)
+#   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
+#   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.4)
+#   WOTS2_SPLASH=N                  Splash-Dauer in Sekunden (Default: 2.5)
+#   WOTS2_KILL_TIMEOUT=N            Sekunden bis SIGKILL (Default: 3)
+#   WOTS2_LIBDIAG=0/1               LD_DEBUG-Probe (Default: 1)
+#
+# ── Wichtiger Hinweis zu getenv() ────────────────────────────────────────
+# Der Port prüft seine Flags mit getenv(...) != nullptr, also "ist die
+# Variable gesetzt?", nicht "ist sie 1?". Würde dieses Skript z. B.
+# WOTS2_NO_CULL=0 exportieren, wäre Culling TROTZDEM aus. Deshalb werden
+# alle Bool-Flags weiter unten mit wots2_export_flag() gesetzt: nur
+# exportieren wenn 1, sonst unset. Das ist die einzige verlässliche
+# Methode, solange der Port nicht auf atoi()-Vergleich umgestellt ist.
+#
+# ── Merge-Status ─────────────────────────────────────────────────────────
+# Der v3-Patch (wots2-merge-3d-draws.py, Marker wots2_merge3d_v3) ist im
+# aktuellen Build. Er sticht TriangleStrips korrekt mit 2 Degenerate-
+# Vertices und haengt alle neuen Vertices hinten an (kein vector::insert).
+# Merge ist deshalb standardmaessig AN (WOTS2_NO_MERGE=0). Wenn du ihn
+# ausschalten willst: WOTS2_NO_MERGE=1 ./WOTS2.sh
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
 export WOTS2_LIBDIAG="${WOTS2_LIBDIAG:-1}"
 WOTS2_KILL_TIMEOUT="${WOTS2_KILL_TIMEOUT:-3}"
+
+# ── Flag-Helfer ──────────────────────────────────────────────────────────
+# Exportiert die Variable nur, wenn ihr Wert "1" ist, sonst unset.
+# Damit funktionieren sowohl getenv(...) != nullptr als auch
+# atoi(getenv(...)) == 1 im C++-Code korrekt.
+wots2_export_flag() {
+    local var="$1" default="$2"
+    local value="${!var:-$default}"
+    if [ "$value" = "1" ]; then
+        export "$var=1"
+    else
+        unset "$var"
+    fi
+}
 
 # ── PFADE ────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
@@ -80,6 +113,16 @@ log_binary_info() {
     if command -v ldd >/dev/null 2>&1; then
         log "  ldd $bin:"
         ldd "$bin" 2>&1 | log_pipe || true
+    fi
+}
+
+# Zeigt den effektiven Zustand eines Bool-Flags im Log an.
+log_flag() {
+    local var="$1" meaning_on="$2"
+    if [ -n "${!var:-}" ]; then
+        log "  $var=${!var}  ->  $meaning_on"
+    else
+        log "  $var=(unset)  ->  aus"
     fi
 }
 
@@ -375,43 +418,39 @@ export MALI_AFBC=1
 export MALI_MAX_ASYNC_BUFFER_COUNT=4
 export MALI_BUFFER_PREALLOC=1
 
-export WOTS2_SHADER_CACHE="${WOTS2_SHADER_CACHE:-1}"
-export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
-
-export WOTS2_NO_BATCH="${WOTS2_NO_BATCH:-0}"
-
-# 3D-Draw-Merge (wots2-merge-3d-draws.py). Default 0 = an.
-export WOTS2_NO_MERGE="${WOTS2_NO_MERGE:-0}"
-export WOTS2_TRACE_MERGE="${WOTS2_TRACE_MERGE:-0}"
-
-# NPC-LOD (wots2-npc-lod-closer.py). Default 8 Weltunits (Original: 12).
-# 0 = immer LOD 2, 12 = wie im Original, 100 = nie LOD 2.
-export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-8}"
-
-# NPC-Max-Dist (wots2-npc-max-dist.py). Default 0 = aus.
-# Ein Wert um 18-22 hilft in der Stadt, laesst Figuren aber poppen.
-export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-0}"
-
-# Punktlichter pro Frame (wots2-gs-lights-cap.py). Default 4.
-# 0 = so viele wie der Shader hergibt (bis 16).
-export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-4}"
-
-# Bump-Mapping (wots2-gs-no-bump.py). Default 0 = aus.
-# 1 = bump_light() im Fragment-Shader uebersprungen (2-4 Lookups/px gespart).
-export WOTS2_NO_BUMP="${WOTS2_NO_BUMP:-0}"
-
-# Persistent buffers: NIEMALS auf 1 setzen. Der Patch liefert auf Mali-G31
-# undefinierte Vertex-Daten und macht das Bild schwarz/weiss.
-export WOTS2_PERSISTENT_BUFFERS="${WOTS2_PERSISTENT_BUFFERS:-0}"
-
-# Stick-Diagnose: nur zum Debuggen, wenn der rechte Stick nicht reagiert.
-export WOTS2_PAD_DIAG="${WOTS2_PAD_DIAG:-0}"
-
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
+
+# ── WOTS2-Flags: NUR exportieren wenn 1, sonst unset ─────────────────────
+# Der Port prüft getenv() != nullptr, also reicht "Variable gesetzt"
+# (auch mit Wert 0), um einen Pfad zu deaktivieren. wots2_export_flag()
+# sorgt dafür, dass "0" wirklich "aus" bedeutet.
+
+# Culling: Default AN (NO_CULL unset)
+wots2_export_flag WOTS2_NO_CULL   0
+# 2D-Batching: Default AN
+wots2_export_flag WOTS2_NO_BATCH  0
+# 3D-Merge: Default AN — v3-Patch ist im Build
+wots2_export_flag WOTS2_NO_MERGE  0
+# Bump-Mapping: Default AUS (2-4 Texture-Lookups/px gespart)
+wots2_export_flag WOTS2_NO_BUMP   1
+# Debug-Traces: Default AUS
+wots2_export_flag WOTS2_TRACE_MERGE 0
+wots2_export_flag WOTS2_TRACE_CULL  0
+wots2_export_flag WOTS2_TRACE_PAIR  0
+wots2_export_flag WOTS2_PERF_TRACE  0
+wots2_export_flag WOTS2_PAD_DIAG    0
+# Shader-Cache: Default AN
+wots2_export_flag WOTS2_SHADER_CACHE 1
+# Persistent Buffers: NIEMALS an, egal was der User setzt
+unset WOTS2_PERSISTENT_BUFFERS
+
+# ── WOTS2-Zahlenwerte ────────────────────────────────────────────────────
+export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.4}"
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
-export WOTS2_NO_CULL="${WOTS2_NO_CULL:-0}"
-export WOTS2_PERF_TRACE="${WOTS2_PERF_TRACE:-0}"
+export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-8}"
+export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-0}"
+export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-4}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -431,21 +470,31 @@ log "  SDL_VIDEODRIVER=$SDL_VIDEODRIVER"
 log "  SDL_GAMECONTROLLERCONFIG_FILE=${SDL_GAMECONTROLLERCONFIG_FILE:-(nicht gesetzt)}"
 log "  WOTS2_DATA_ROOT=$WOTS2_DATA_ROOT"
 log "  WOTS2_SAVE_ROOT=$WOTS2_SAVE_ROOT"
-log "  WOTS2_SHADER_CACHE=$WOTS2_SHADER_CACHE"
+log ""
+log "Flags (effektiv):"
+log_flag WOTS2_NO_CULL    "Culling aus"
+log_flag WOTS2_NO_BATCH   "2D-Batching aus"
+log_flag WOTS2_NO_MERGE   "3D-Merge aus"
+log_flag WOTS2_NO_BUMP    "Bump-Mapping aus"
+log_flag WOTS2_TRACE_MERGE "Merge-Statistik an"
+log_flag WOTS2_TRACE_CULL  "Cull-Statistik an"
+log_flag WOTS2_TRACE_PAIR  "Pairing-Statistik an"
+log_flag WOTS2_PERF_TRACE  "Perf-Trace an"
+log_flag WOTS2_PAD_DIAG    "Stick-Diagnose an"
+log_flag WOTS2_SHADER_CACHE "Shader-Cache an"
+if [ -n "${WOTS2_PERSISTENT_BUFFERS:-}" ]; then
+    log "  WOTS2_PERSISTENT_BUFFERS=${WOTS2_PERSISTENT_BUFFERS}  ->  WARNUNG, sollte unset sein"
+else
+    log "  WOTS2_PERSISTENT_BUFFERS=(unset)  ->  aus (korrekt)"
+fi
+log ""
+log "Zahlenwerte:"
 log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
-log "  WOTS2_NO_BATCH=$WOTS2_NO_BATCH"
-log "  WOTS2_NO_MERGE=$WOTS2_NO_MERGE"
-log "  WOTS2_TRACE_MERGE=$WOTS2_TRACE_MERGE"
-log "  WOTS2_NO_CULL=$WOTS2_NO_CULL"
+log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
+log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST"
 log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST"
 log "  WOTS2_LIGHTS_MAX=$WOTS2_LIGHTS_MAX"
-log "  WOTS2_NO_BUMP=$WOTS2_NO_BUMP"
-log "  WOTS2_PERSISTENT_BUFFERS=$WOTS2_PERSISTENT_BUFFERS"
-log "  WOTS2_PAD_DIAG=$WOTS2_PAD_DIAG"
-log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
-log "  WOTS2_SPLASH=$WOTS2_SPLASH"
-log "  WOTS2_PERF_TRACE=$WOTS2_PERF_TRACE"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
 log ""
