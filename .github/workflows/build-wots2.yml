@@ -233,10 +233,6 @@ jobs:
           # ══ NEUER PATCH: NPC-DRAW-PFAD-LOD ══════════════════════════
           # Muss VOR chara-pose-pool.py laufen: chara-draw-lod erwartet
           # die unveraenderten pose/headPose-Loops in hle_chara.cpp.
-          # Vereinfacht den Draw-Pfad fuer ferne NPCs (keine Lights_At,
-          # kein ground_eased, keine Per-Bone-Matrixmultiplikation,
-          # kein Shadow-Pass). NPC bleibt sichtbar.
-          # Rollback: WOTS2_CHARA_DRAW_SKIP_DIST=0 / WOTS2_CHARA_SHADOW_SKIP_DIST=0.
           S=$(find_script wots2-chara-draw-lod.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-draw-lod.py nicht gefunden)"
@@ -246,18 +242,25 @@ jobs:
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
 
           # ══ MAP-BATCHING ════════════════════════════════════════════
-          # Modifiziert 4 Dateien (model.h, gs.h, model.cpp, gs.cpp).
-          # Wird mit dem Repo-Root als Argument aufgerufen.
           S=$(find_script wots2-map-batching.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-map-batching.py nicht gefunden — alter Pfad)"
 
           # ══ NPC-SIM-DISTANZ ═════════════════════════════════════════
-          # Modifiziert src/game/chara_mgr.cpp (Update / StepA..D / StepMap).
-          # Idempotent, WOTS2_NPC_SIM_DIST=0 = aus.
           S=$(find_script wots2-npc-sim-distance.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-npc-sim-distance.py nicht gefunden)"
+
+          # ══ FRAME-TIMING ════════════════════════════════════════════
+          # Misst die Zeit in jedem CharaMgr-Schritt. Loggt alle 30 Frames
+          # eine [timing]-Zeile mit update/stepA-D/stepMap/draw in ms.
+          # Kein Eingriff in die Spiellogik. Default: an.
+          # Rollback: WOTS2_TIMING=0 in der WOTS2.sh.
+          # Muss NACH chara-mgr-find-cache und npc-sim-distance laufen,
+          # weil er die aktuellen Step-Loop-Ruempfe umklammert.
+          S=$(find_script wots2-frame-timing.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
+                    || echo "  (wots2-frame-timing.py nicht gefunden)"
 
           echo "== Patches fertig =="
 
@@ -269,7 +272,6 @@ jobs:
           rm -rf "$OUT"
           mkdir -p "$OUT"
 
-          # Diese Dateien werden von mindestens einem Patch modifiziert.
           FILES=(
             "src/hal/gs.cpp"
             "src/hal/pad.cpp"
@@ -298,7 +300,6 @@ jobs:
             fi
           done
 
-          # port_options.h kann an unterschiedlichen Stellen liegen
           PORTOPT=$(find include -name "port_options.h" 2>/dev/null | head -n 1)
           if [ -n "$PORTOPT" ]; then
             mkdir -p "$OUT/$(dirname "$PORTOPT")"
@@ -306,7 +307,6 @@ jobs:
             echo "  kopiert: $PORTOPT"
           fi
 
-          # Manifest mit Größe und Zeilenzahl — hilft beim schnellen Einordnen
           MANIFEST="$OUT/MANIFEST.txt"
           {
             echo "Gepatchte Quelldateien (Stand nach 'Patches anwenden')"
