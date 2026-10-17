@@ -22,8 +22,8 @@
 #
 # ── Zahlenwerte ──────────────────────────────────────────────────────────
 #   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1 = jeden Frame)
-#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle in Units (Default: 6)
-#   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz, 0=aus (Default: 0)
+#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle in Units (Default: 4)
+#   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz, 0=aus (Default: 12)
 #   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 2)
 #   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
 #   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.25)
@@ -420,12 +420,15 @@ unset WOTS2_PERSISTENT_BUFFERS
 
 # ── WOTS2-Zahlenwerte ────────────────────────────────────────────────────
 # WOTS2_SHADOW_INTERVAL=1: Shadow-Pass jeden Frame neu (kein Flackern)
+# WOTS2_NPC_LOD_DIST=4, WOTS2_NPC_MAX_DIST=12: aggressives NPC-LOD/Cull
+#   als Messlauf. Sichtbare Pop-in-Effekte. Zum Zurueckdrehen:
+#   WOTS2_NPC_LOD_DIST=6 WOTS2_NPC_MAX_DIST=0 ./WOTS2.sh
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.25}"
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
-export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-6}"
-export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-0}"
+export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-4}"
+export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-12}"
 export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-2}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
