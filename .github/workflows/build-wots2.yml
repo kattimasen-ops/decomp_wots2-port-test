@@ -241,6 +241,13 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (wots2-map-batching.py nicht gefunden — alter Pfad)"
 
+          # ══ NEUER PATCH: NPC-SIM-DISTANZ ═══════════════════════════
+          # Modifiziert src/game/chara_mgr.cpp (Update / StepA..D / StepMap).
+          # Idempotent, WOTS2_NPC_SIM_DIST=0 = aus.
+          S=$(find_script wots2-npc-sim-distance.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
+                    || echo "  (wots2-npc-sim-distance.py nicht gefunden)"
+
           echo "== Patches fertig =="
 
       - name: Gepatchte Quelldateien sichern
