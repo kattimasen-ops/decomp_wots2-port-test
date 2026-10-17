@@ -7,6 +7,43 @@
 # Killswitch:
 #   gptokeyb wird mit "-k wots2" gestartet. Der Standard-Hotkey
 #   (Select+Start) beendet wots2 sauber.
+#
+# ── Flags, die mit 0/1 geschaltet werden ─────────────────────────────────
+#   WOTS2_NO_CULL=0/1               Frustum-Culling AUS (Default: 0 = an)
+#   WOTS2_NO_BATCH=0/1              2D-Batching AUS (Default: 0 = an)
+#   WOTS2_NO_BUMP=0/1               Bump-Mapping AUS (Default: 1 = aus)
+#   WOTS2_NO_SHADOW=0/1             Shadow-Pass AUS (Default: 0 = an)
+#   WOTS2_NO_MAP_BATCHING=0/1       Map-Batching AUS (Default: 0 = an)
+#   WOTS2_TRACE_CULL=0/1            Cull-Statistik ins stdout (Default: 0 = aus)
+#   WOTS2_PERF_TRACE=0/1            Frame-Zeiten loggen (Default: 1)
+#   WOTS2_PAD_DIAG=0/1              Stick-Diagnose ins stderr (Default: 0)
+#   WOTS2_SHADER_CACHE=0/1          Shader-Cache (Default: 1)
+#   WOTS2_TIMING=0/1                Frame-Timing ins stdout (Default: 1 für Analyse)
+#   WOTS2_ATIMING=0/1               App-Loop-Timing [atiming] (Default: 1 für Analyse)
+#   WOTS2_NO_BLOOM=0/1              Bloom-Pass AUS (Default: 1 = aus)
+#   WOTS2_NO_POST=0/1               Komplette Post-Kette AUS (Default: unset)
+#   WOTS2_NO_VSYNC=0/1              V-Sync AUS (Default: 1; wird seit wots2-gs-novsync.py honoriert)
+#   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
+#
+# ── Zahlenwerte ──────────────────────────────────────────────────────────
+#   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1)
+#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle (Default: 4, wirkt nicht)
+#   WOTS2_NPC_MAX_DIST=N            Draw-Cull (Kamera-Distanz, Default: 16)
+#   WOTS2_NPC_SIM_DIST=N            Sim-Skip (Spieler-Distanz, Default: 15)
+#   WOTS2_CHARA_DRAW_SKIP_DIST=N    Draw-Pfad-Skip (Spieler-D., Default: 10)
+#   WOTS2_CHARA_SHADOW_SKIP_DIST=N  Shadow-Skip (Spieler-D., Default: 5)
+#   WOTS2_SWORD_DRAW_DIST=N         Schwert-Draw-Skip (Kamera-D., Default: 8)
+#   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 1)
+#   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
+#   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.05)
+#   WOTS2_SPLASH=N                  Splash-Dauer in Sekunden (Default: 2.5)
+#   WOTS2_KILL_TIMEOUT=N            Sekunden bis SIGKILL (Default: 3)
+#   WOTS2_LIBDIAG=0/1               LD_DEBUG-Probe (Default: 1)
+#
+# ── Wichtiger Hinweis zu getenv() ────────────────────────────────────────
+# Der Port prüft seine Flags mit getenv(...) != nullptr. Deshalb werden
+# alle Bool-Flags mit wots2_export_flag() gesetzt: nur exportieren wenn
+# 1, sonst unset.
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
@@ -56,6 +93,32 @@ log_section() {
 
 log_pipe() {
     while IFS= read -r line; do log "    $line"; done
+}
+
+log_binary_info() {
+    local bin="$1"
+    [ ! -e "$bin" ] && { log "  ($bin existiert nicht)"; return; }
+    if command -v file >/dev/null 2>&1; then
+        log "  file $bin:"
+        file "$bin" 2>&1 | log_pipe
+    fi
+    if command -v readelf >/dev/null 2>&1; then
+        log "  readelf -d $bin | NEEDED:"
+        readelf -d "$bin" 2>/dev/null | grep NEEDED | log_pipe || log "    (keine NEEDED)"
+    fi
+    if command -v ldd >/dev/null 2>&1; then
+        log "  ldd $bin:"
+        ldd "$bin" 2>&1 | log_pipe || true
+    fi
+}
+
+log_flag() {
+    local var="$1" meaning_on="$2"
+    if [ -n "${!var:-}" ]; then
+        log "  $var=${!var}  ->  $meaning_on"
+    else
+        log "  $var=(unset)  ->  aus"
+    fi
 }
 
 find_gptokeyb() {
@@ -118,7 +181,7 @@ if [ -n "$PM_CONTROLFOLDER" ] && [ -f "$PM_CONTROLFOLDER/control.txt" ]; then
     log "PortMaster control.txt geladen aus $PM_CONTROLFOLDER"
 fi
 
-# ── SDL-GAMECONTROLLER ───────────────────────────────────────────────
+# ── SDL-GAMECONTROLLER + DIAGNOSE-DUMP ───────────────────────────────
 SDL_DIAG="$GAMEDIR/sdl_diag.txt"
 : > "$SDL_DIAG"
 {
@@ -212,6 +275,32 @@ else
     log "ZRAM bereits aktiv."
 fi
 
+WOTS2_SERVICE_STATE="/tmp/wots2-services.$$"
+WOTS2_SERVICES_RESTORED=0
+stop_service_if_active() {
+    local service="$1"
+    if command -v systemctl >/dev/null 2>&1 && \
+       systemctl is-active --quiet "$service" 2>/dev/null; then
+        echo "$service" >> "$WOTS2_SERVICE_STATE" 2>/dev/null || true
+        log "stopping $service"
+        command -v sudo >/dev/null 2>&1 && sudo -n systemctl stop "$service" 2>/dev/null || true
+    fi
+}
+restore_services() {
+    [ "$WOTS2_SERVICES_RESTORED" = "0" ] || return 0
+    WOTS2_SERVICES_RESTORED=1
+    if [ -f "$WOTS2_SERVICE_STATE" ]; then
+        while IFS= read -r service; do
+            [ -n "$service" ] || continue
+            log "restoring $service"
+            command -v sudo >/dev/null 2>&1 && sudo -n systemctl start "$service" 2>/dev/null || true
+        done < "$WOTS2_SERVICE_STATE"
+        rm -f "$WOTS2_SERVICE_STATE" 2>/dev/null || true
+    fi
+}
+: > "$WOTS2_SERVICE_STATE" 2>/dev/null || true
+stop_service_if_active tailscaled.service
+
 saved=/tmp/wots2-clocks
 printf '%s|%s|%s\n' "$cpu_saved" "$gpu_gov_saved" "$gpu_min_saved" > "$saved" 2>/dev/null || true
 
@@ -229,6 +318,7 @@ restore() {
         fi
         rm -f "$saved"
     fi
+    restore_services
     rm -f /var/run/battery-saver/wots2.pause 2>/dev/null || true
     log "Restore abgeschlossen."
 }
@@ -312,7 +402,9 @@ unset AUDIODEV
 export WOTS2_DATA_ROOT="$DATA_ROOT"
 export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 
-# ── RUNTIME-TUNING (MAX PERF) ────────────────────────────────────────
+# ── RUNTIME-TUNING ───────────────────────────────────────────────────
+# V-Sync aus: seit wots2-gs-novsync.py wertet gs.cpp diese Variable endlich
+# aus (vorher wurde nur WOTS2_FAST gelesen). ~15 ms Ersparnis pro Frame.
 export WOTS2_NO_VSYNC=1
 export WOTS2_BUTTON_REMAP=1
 
@@ -349,12 +441,35 @@ export WOTS2_NO_SKY=1
 export WOTS2_NO_WATER=1
 export WOTS2_NO_SHIMMER=1
 
+# ══════════════════════════════════════════════════════════════════════
+# WOTS2_NO_POST — Komplette Post-Kette aus (9-12 ms)
+# ══════════════════════════════════════════════════════════════════════
+# Der [gtiming]-Wert play.post war ~3,3 ms (Bloom+Grade) plus Blit in
+# swap plus Depth-Buffer-Write in play.loop. Zusammen 9-12 ms laut
+# letztem [gtiming]-Run.
+#
+# WARNUNG: Das Bild verliert dann Farbkorrektur, Bloom und alle Schatten
+# (auch die vom Charakter). Sichtbar, aber spielbar. Wenn dir das zu
+# aggressiv ist, lass es auskommentiert.
+#
+# # export WOTS2_NO_POST=1
+
 # ── WOTS2-Zahlenwerte: MAX-PERFORMANCE-PRESET ───────────────────────────
 # Distanz-Baender (Kamera ~3.5u hinter Spieler):
 #   gezeichnet (MAX_DIST=16):        0 .. 12u Spieler-Distanz
 #   voll animiert (DRAW_SKIP=10):    0 ..  9u
 #   simuliert (SIM_DIST=15):         0 .. 14u
 #   Schwert gezeichnet (SWORD_DRAW=8): 0 .. 8u Kamera-Distanz
+#
+# Rollback-Beispiele:
+#   WOTS2_NPC_MAX_DIST=30     ./WOTS2.sh   # weniger Pop-in
+#   WOTS2_CHARA_DRAW_SKIP_DIST=20 ./WOTS2.sh
+#   WOTS2_CHARA_SHADOW_SKIP_DIST=12 ./WOTS2.sh
+#   WOTS2_NPC_SIM_DIST=28     ./WOTS2.sh
+#   WOTS2_SWORD_DRAW_DIST=999 ./WOTS2.sh   # Schwerter immer zeichnen
+#   WOTS2_LIGHTS_MAX=2        ./WOTS2.sh   # mehr Licht
+#   WOTS2_FX_SCALE=0.25       ./WOTS2.sh   # mehr Effekte
+#   WOTS2_NO_BLOOM=0          ./WOTS2.sh   # Bloom wieder an
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
 export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.05}" # Halbiert die Partikel-Menge!
@@ -375,15 +490,259 @@ if [ ! -x ./wots2 ]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════
-# SPIELDATEN ENTPACKEN (Übersprungen, da bereits entpackt)
+# DIAGNOSE
+# ══════════════════════════════════════════════════════════════════════
+log_section "DIAGNOSE"
+
+log "Umgebung:"
+log "  LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+log "  SDL_VIDEODRIVER=$SDL_VIDEODRIVER"
+log "  SDL_GAMECONTROLLERCONFIG_FILE=${SDL_GAMECONTROLLERCONFIG_FILE:-(nicht gesetzt)}"
+log "  WOTS2_DATA_ROOT=$WOTS2_DATA_ROOT"
+log "  WOTS2_SAVE_ROOT=$WOTS2_SAVE_ROOT"
+log ""
+log "Flags (effektiv):"
+log_flag WOTS2_NO_CULL    "Culling aus"
+log_flag WOTS2_NO_BATCH   "2D-Batching aus"
+log_flag WOTS2_NO_BUMP    "Bump-Mapping aus"
+log_flag WOTS2_NO_SHADOW  "Shadow-Pass aus"
+log_flag WOTS2_NO_MAP_BATCHING "Map-Batching aus"
+log_flag WOTS2_TRACE_CULL  "Cull-Statistik an"
+log_flag WOTS2_PERF_TRACE  "Perf-Trace an"
+log_flag WOTS2_PAD_DIAG    "Stick-Diagnose an"
+log_flag WOTS2_SHADER_CACHE "Shader-Cache an"
+log_flag WOTS2_TIMING      "Frame-Timing an ([timing] + [gtiming] + [mtiming])"
+log_flag WOTS2_ATIMING     "App-Loop-Timing an ([atiming])"
+log_flag WOTS2_NO_BLOOM    "Bloom aus"
+log_flag WOTS2_NO_POST     "Komplette Post-Kette aus (sichtbar!)"
+log_flag WOTS2_NO_VSYNC    "V-Sync aus (Swap blockiert nicht mehr auf V-Blank)"
+if [ -n "${WOTS2_PERSISTENT_BUFFERS:-}" ]; then
+    log "  WOTS2_PERSISTENT_BUFFERS=${WOTS2_PERSISTENT_BUFFERS}  ->  WARNUNG, sollte unset sein"
+else
+    log "  WOTS2_PERSISTENT_BUFFERS=(unset)  ->  aus (korrekt)"
+fi
+log ""
+log "Zahlenwerte:"
+log "  WOTS2_SHADOW_INTERVAL=$WOTS2_SHADOW_INTERVAL"
+log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
+log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
+log "  WOTS2_SPLASH=$WOTS2_SPLASH"
+log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST (derzeit wirkungslos)"
+log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST (Kamera-Distanz)"
+log "  WOTS2_NPC_SIM_DIST=$WOTS2_NPC_SIM_DIST (Spieler-Distanz, 0 = aus)"
+log "  WOTS2_CHARA_DRAW_SKIP_DIST=$WOTS2_CHARA_DRAW_SKIP_DIST (Spieler-Distanz, 0 = aus)"
+log "  WOTS2_CHARA_SHADOW_SKIP_DIST=$WOTS2_CHARA_SHADOW_SKIP_DIST (Spieler-Distanz, 0 = aus)"
+log "  WOTS2_SWORD_DRAW_DIST=$WOTS2_SWORD_DRAW_DIST (Kamera-Distanz, 999 = aus)"
+log "  WOTS2_LIGHTS_MAX=$WOTS2_LIGHTS_MAX"
+log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
+log ""
+log "Effektive Distanz-Bänder (Naeherung, Kamera ~3.5u hinter Spieler):"
+log "  gezeichnet (MAX_DIST):          0 .. ~$(( WOTS2_NPC_MAX_DIST - 4 ))u Spieler-Distanz"
+log "  voll animiert + beleuchtet:     0 .. $(( WOTS2_CHARA_DRAW_SKIP_DIST - 1 ))u"
+log "  nur Rest-Pose, kein Licht:      $WOTS2_CHARA_DRAW_SKIP_DIST .. $(( WOTS2_NPC_MAX_DIST - 4 ))u"
+log "  mit Schatten:                   0 .. $(( WOTS2_CHARA_SHADOW_SKIP_DIST - 1 ))u"
+log "  simuliert (SIM_DIST):           0 .. $(( WOTS2_NPC_SIM_DIST - 1 ))u"
+log "  Schwert gezeichnet:             0 .. $(( WOTS2_SWORD_DRAW_DIST - 1 ))u Kamera-Distanz"
+
+log ""
+log "Bundle-Bibliotheken (libs.aarch64):"
+if [ -d "$GAMEDIR/libs.aarch64" ]; then
+    ls -la "$GAMEDIR/libs.aarch64" 2>&1 | log_pipe
+    if [ -e "$GAMEDIR/libs.aarch64/libSDL2-2.0.so.0" ]; then
+        log "  OK: libSDL2-2.0.so.0 im Bundle — System-SDL2 wird umgangen."
+    else
+        log "  WARNUNG: libSDL2-2.0.so.0 fehlt in libs.aarch64!"
+    fi
+else
+    log "  (libs.aarch64 fehlt komplett)"
+fi
+
+log ""
+log "Binary ./wots2:"
+log_binary_info "./wots2"
+
+if [ -x "$CHDMAN" ]; then
+    log ""
+    log "Binary ./chdman:"
+    log_binary_info "./chdman"
+fi
+
+log ""
+log "gptokeyb:"
+if find_gptokeyb; then
+    log "  gefunden: $GPTOKEYB_PATH"
+else
+    log "  NICHT gefunden — Kill-Hotkey (Select+Start) faellt aus."
+fi
+
+log ""
+log "SDL-Diagnose-Dump: $SDL_DIAG ($(wc -l < "$SDL_DIAG" 2>/dev/null || echo 0) Zeilen)"
+
+LIBDIAG_LOG="$GAMEDIR/wots2-libdiag.txt"
+if [ "${WOTS2_LIBDIAG:-0}" = "1" ]; then
+    log ""
+    log "WOTS2_LIBDIAG=1: LD_DEBUG=libs Probe (max 5 Sekunden) ..."
+    : > "$LIBDIAG_LOG"
+    PROBE_OK=0
+    if command -v timeout >/dev/null 2>&1; then
+        ( LD_DEBUG=libs timeout 5 ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" || PROBE_OK=1
+    else
+        ( LD_DEBUG=libs ./wots2 extracted ) > /dev/null 2>> "$LIBDIAG_LOG" &
+        DIAG_PID=$!
+        ( sleep 5 && kill -TERM "$DIAG_PID" 2>/dev/null ) &
+        KILLER_PID=$!
+        wait "$DIAG_PID" 2>/dev/null || PROBE_OK=1
+        kill -TERM "$KILLER_PID" 2>/dev/null || true
+        wait "$KILLER_PID" 2>/dev/null || true
+    fi
+    if [ -s "$LIBDIAG_LOG" ]; then
+        head -200 "$LIBDIAG_LOG" > "$LIBDIAG_LOG.head"
+        mv -f "$LIBDIAG_LOG.head" "$LIBDIAG_LOG"
+        LINES=$(wc -l < "$LIBDIAG_LOG")
+        log "  $LIBDIAG_LOG geschrieben ($LINES Zeilen)"
+        log "  Erste 20 Zeilen:"
+        head -20 "$LIBDIAG_LOG" | log_pipe
+    else
+        log "  WARNUNG: LD_DEBUG hat nichts geschrieben."
+    fi
+    if [ "$PROBE_OK" = "1" ]; then
+        log "  Hinweis: Der Probe-Lauf endete nicht regulaer —"
+        log "  das Spiel ist entweder abgestuerzt oder braucht mehr als 5 Sekunden."
+    fi
+else
+    log ""
+    log "WOTS2_LIBDIAG=$WOTS2_LIBDIAG (Probe uebersprungen)."
+fi
+
+# ══════════════════════════════════════════════════════════════════════
+# HELFER: Entpacker wählen
+# ══════════════════════════════════════════════════════════════════════
+pick_extractor() {
+    if command -v bsdtar >/dev/null 2>&1; then echo "bsdtar"
+    elif command -v 7z     >/dev/null 2>&1; then echo "7z"
+    elif command -v 7za    >/dev/null 2>&1; then echo "7za"
+    elif command -v unzip  >/dev/null 2>&1; then echo "unzip"
+    else echo ""; fi
+}
+
+unpack_image() {
+    local img="$1"
+    local extractor
+    extractor="$(pick_extractor)"
+    if [ -z "$extractor" ]; then
+        log "FEHLER: Kein Entpacker gefunden."
+        return 1
+    fi
+    log "Entpacker: $extractor"
+    local tmp="$GAMEDIR/.extract-tmp"
+    rm -rf "$tmp"
+    mkdir -p "$tmp"
+    log "Entpacke $img nach $tmp ..."
+    case "$extractor" in
+        bsdtar) bsdtar -xf "$img" -C "$tmp" 2>>"$LOG" || return 1 ;;
+        7z|7za) 7z x -y -o"$tmp" "$img" >>"$LOG" 2>&1 || return 1 ;;
+        unzip)  unzip -o "$img" -d "$tmp" >>"$LOG" 2>&1 || return 1 ;;
+    esac
+    mkdir -p "$EXTRACTED"
+    local subdir
+    subdir="$(find "$tmp" -maxdepth 2 -type d \( -name 'PS2' -o -name 'SLUS*' \) 2>/dev/null | head -n 1)"
+    if [ -n "$subdir" ] && [ -d "$subdir" ]; then
+        log "Verschiebe Inhalt aus $subdir"
+        cp -a "$subdir"/. "$EXTRACTED"/ 2>>"$LOG" || true
+    else
+        cp -a "$tmp"/. "$EXTRACTED"/ 2>>"$LOG" || true
+    fi
+    rm -rf "$tmp"
+    return 0
+}
+
+# ══════════════════════════════════════════════════════════════════════
+# ENTPACKEN — CHD zuerst, dann ISO, dann Archive
 # ══════════════════════════════════════════════════════════════════════
 log_section "SPIELDATEN ENTPACKEN"
 
 if [ -f "$EXTRACTED/SLUS_208.93" ] || [ -f "$EXTRACTED/slus_208.93" ]; then
     log "extracted/ enthaelt bereits SLUS_208.93 — ueberspringe Entpacken."
 else
-    log "FEHLER: SLUS_208.93 fehlt in extracted/."
-    exit 1
+    NEEDS_UNPACK=1
+
+    CHD_FILE=""
+    for cand in "$GAMEDIR"/*.chd "$GAMEDIR"/*.CHD \
+                "$SCRIPT_DIR"/*.chd "$SCRIPT_DIR"/*.CHD; do
+        [ -f "$cand" ] && { CHD_FILE="$cand"; break; }
+    done
+
+    if [ -n "$CHD_FILE" ]; then
+        log "CHD gefunden: $CHD_FILE"
+        if [ ! -x "$CHDMAN" ]; then
+            log "FEHLER: chdman nicht gefunden unter $CHDMAN."
+            echo "FEHLER: chdman fehlt." >&2
+            exit 1
+        fi
+        TMP_CHD="$GAMEDIR/.chd-extract"
+        rm -rf "$TMP_CHD"
+        mkdir -p "$TMP_CHD"
+        BASE="$(basename "$CHD_FILE")"
+        BASE="${BASE%.chd}"; BASE="${BASE%.CHD}"
+        log "Extrahiere CHD nach ISO ..."
+        CHD_ISO=""
+        if "$CHDMAN" extractdvd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.iso" >>"$LOG" 2>&1 \
+           && [ -f "$TMP_CHD/$BASE.iso" ]; then
+            CHD_ISO="$TMP_CHD/$BASE.iso"
+            log "extractdvd erfolgreich."
+        elif "$CHDMAN" extractcd -i "$CHD_FILE" -o "$TMP_CHD/$BASE.cue" \
+                                 -ob "$TMP_CHD/$BASE.bin" >>"$LOG" 2>&1 \
+             && [ -f "$TMP_CHD/$BASE.bin" ]; then
+            CHD_ISO="$TMP_CHD/$BASE.bin"
+            log "extractcd erfolgreich (CUE/BIN)."
+        else
+            log "FEHLER: chdman konnte die CHD nicht extrahieren."
+            echo "FEHLER: CHD-Extraktion fehlgeschlagen. Log: $LOG" >&2
+            rm -rf "$TMP_CHD"
+            exit 1
+        fi
+        log "Entpacke die entstandene ISO/BIN ..."
+        if ! unpack_image "$CHD_ISO"; then
+            log "FEHLER: ISO-Entpacken fehlgeschlagen."
+            echo "FEHLER: ISO-Entpacken fehlgeschlagen. Log: $LOG" >&2
+            rm -rf "$TMP_CHD"
+            exit 1
+        fi
+        rm -rf "$TMP_CHD"
+        log "CHD-Verarbeitung abgeschlossen."
+        NEEDS_UNPACK=0
+    fi
+
+    if [ "$NEEDS_UNPACK" = "1" ]; then
+        IMG=""
+        for cand in "$GAMEDIR"/*.iso "$GAMEDIR"/*.ISO \
+                    "$GAMEDIR"/*.zip "$GAMEDIR"/*.7z "$GAMEDIR"/*.rar \
+                    "$GAMEDIR"/*.tar.* "$SCRIPT_DIR"/*.iso "$SCRIPT_DIR"/*.zip; do
+            [ -f "$cand" ] && { IMG="$cand"; break; }
+        done
+        if [ -z "$IMG" ]; then
+            log "FEHLER: Kein Disc-Image und keine CHD gefunden."
+            echo "FEHLER: Bitte 'wots2.chd' oder 'wots2.iso' in $GAMEDIR ablegen." >&2
+            exit 1
+        fi
+        log "Disc-Image: $IMG"
+        if ! unpack_image "$IMG"; then
+            log "FEHLER: Entpacken fehlgeschlagen."
+            echo "FEHLER: Entpacken fehlgeschlagen. Log: $LOG" >&2
+            exit 1
+        fi
+    fi
+
+    log "Inhalt von extracted/:"
+    ls -la "$EXTRACTED" | head -20 | log_pipe
+
+    if [ ! -f "$EXTRACTED/SLUS_208.93" ] && [ ! -f "$EXTRACTED/slus_208.93" ]; then
+        log "FEHLER: SLUS_208.93 fehlt in extracted/."
+        echo "FEHLER: SLUS_208.93 fehlt. Log: $LOG" >&2
+        find "$EXTRACTED" -maxdepth 2 -type f 2>/dev/null | head -30 | log_pipe
+        exit 1
+    fi
+    log "SLUS_208.93 vorhanden — Entpacken OK."
 fi
 
 # ══════════════════════════════════════════════════════════════════════
