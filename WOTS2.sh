@@ -24,7 +24,7 @@
 #   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1 = jeden Frame)
 #   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle (Default: 4, wirkt derzeit nicht — Draw-Parameter wird ignoriert)
 #   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz zur Kamera, 0=aus (Default: 30)
-#   WOTS2_NPC_SIM_DIST=N            Simulations-Stillstand ab N Units zum Spieler, 0=aus (Default: 0)
+#   WOTS2_NPC_SIM_DIST=N            Simulations-Stillstand ab N Units zum Spieler, 0=aus (Default: 40)
 #   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 2)
 #   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
 #   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.25)
@@ -429,15 +429,23 @@ unset WOTS2_PERSISTENT_BUFFERS
 # WOTS2_NPC_LOD_DIST=4     — LOD-2-Schwelle. ACHTUNG: derzeit wirkungslos,
 #                            der CharaModels_Draw-Parameter wird ignoriert.
 #                            Wert bleibt fuer einen spaeteren Fix.
-# WOTS2_NPC_SIM_DIST=0     — Simulations-Stillstand. AUS. Der v1-Patch
-#                            hatte einen Bug (stale cameraDistance liess
-#                            NPCs dauerhaft einfrieren); v2 misst gegen
-#                            den Spieler, ist aber noch nicht verbaut.
+# WOTS2_NPC_SIM_DIST=40    — Simulations-Stillstand. AN, seit v2.1 verbaut.
+#                            Ferne NPCs (> 40 Spieler-Units) werden in
+#                            CharaMgr_Update/StepA..D/StepMap uebersprungen.
+#                            Band 26..40 = simuliert, aber nicht gezeichnet;
+#                            Band > 40 = weder sim noch Draw (unsichtbar,
+#                            aber niemand sieht sie). Der Spieler (id 0)
+#                            und gelockte Gegner (targetFlags & 0x1000000)
+#                            laufen immer.
+#                            Falls in Run B noch Pop-in auftaucht:
+#                            WOTS2_NPC_SIM_DIST=34 ./WOTS2.sh
+#                            (34 > 26, also kein sichtbares Einfrieren).
 # WOTS2_LIGHTS_MAX=2       — Punktlichter pro Frame (0..8 geklemmt).
 #
 # Rollback-Beispiele:
 #   WOTS2_NPC_MAX_DIST=12 ./WOTS2.sh          # Pop-in-Test aus alter Zeit
 #   WOTS2_NPC_MAX_DIST=0  ./WOTS2.sh          # Culling aus (Draw-Referenz)
+#   WOTS2_NPC_SIM_DIST=0  ./WOTS2.sh          # Sim-Patch komplett aus
 #   WOTS2_TRACE_CULL=1    ./WOTS2.sh          # Cull-Statistik wieder an
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
@@ -445,7 +453,7 @@ export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.25}"
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
 export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-4}"
 export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-30}"
-export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-0}"
+export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-40}"
 export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-2}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
