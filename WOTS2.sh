@@ -18,6 +18,7 @@
 #   WOTS2_PERF_TRACE=0/1            Frame-Zeiten loggen (Default: 1)
 #   WOTS2_PAD_DIAG=0/1              Stick-Diagnose ins stderr (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1          Shader-Cache (Default: 1)
+#   WOTS2_TIMING=0/1                Frame-Timing ins stdout (Default: 1)
 #   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
 #
 # ── Zahlenwerte ──────────────────────────────────────────────────────────
@@ -419,6 +420,7 @@ wots2_export_flag WOTS2_TRACE_CULL  0
 wots2_export_flag WOTS2_PERF_TRACE  1
 wots2_export_flag WOTS2_PAD_DIAG    0
 wots2_export_flag WOTS2_SHADER_CACHE 1
+wots2_export_flag WOTS2_TIMING      1
 unset WOTS2_PERSISTENT_BUFFERS
 
 # ── WOTS2-Zahlenwerte ────────────────────────────────────────────────────
@@ -441,16 +443,19 @@ unset WOTS2_PERSISTENT_BUFFERS
 #                                ohne dass sichtbare NPCs einfrieren
 #                                (die 2-Unit-Luecke zu MAX_DIST ist Puffer).
 #
-# Wenn spaeter MAX_DIST erhoeht wird (z.B. auf 40 fuer mehr Sichtweite),
-# muessen DRAW_SKIP und SHADOW_SKIP entsprechend angehoben werden, sonst
-# werden sie wieder toter Code.
+# WOTS2_TIMING=1: Frame-Timing an (Default: an). Der Patch schreibt alle
+# 30 Frames eine [timing]-Zeile nach stdout mit den Zeiten in ms fuer:
+#   update   - CharaMgr_Update (Control-Steps, Body-Update, Motion, Sound)
+#   stepA    - CharaMgr_StepA (nur BeginFrame-Flag-Setzen)
+#   stepB    - CharaMgr_StepB (StepB-VCall + Chara_fn1cccf0)
+#   stepC    - CharaMgr_StepC (Chara_fn1cec20)
+#   stepD    - CharaMgr_StepD (StepD-VCall)
+#   stepMap  - CharaMgr_StepMap (Map-Kollision pro NPC)
+#   draw     - CharaMgr_Draw (CharaModels_Draw inkl. Skinning/GL-Calls)
+#   total    - Summe aller sieben
+# Overhead: ~1 us/Frame. Rollback: WOTS2_TIMING=0.
 #
-# WOTS2_NPC_LOD_DIST=4     — LOD-2-Schwelle. ACHTUNG: derzeit wirkungslos,
-#                            der CharaModels_Draw-Parameter ist der Draw-Pass,
-#                            nicht LOD. Der echte LOD-Mechanismus sitzt in
-#                            CharaModels_Start(phase); phase > 2 gibt es
-#                            nicht, und acquire_models() laedt fest LOD 1.
-#                            Wert bleibt fuer einen spaeteren Fix.
+# WOTS2_NPC_LOD_DIST=4     — LOD-2-Schwelle. ACHTUNG: derzeit wirkungslos.
 # WOTS2_LIGHTS_MAX=2       — Punktlichter pro Frame (0..8 geklemmt).
 #
 # Rollback-Beispiele:
@@ -458,6 +463,7 @@ unset WOTS2_PERSISTENT_BUFFERS
 #   WOTS2_NPC_SIM_DIST=0  ./WOTS2.sh          # Sim-Skip aus
 #   WOTS2_CHARA_DRAW_SKIP_DIST=0  ./WOTS2.sh  # Draw-Pfad-Skip aus
 #   WOTS2_CHARA_SHADOW_SKIP_DIST=0 ./WOTS2.sh # Shadow-Skip aus
+#   WOTS2_TIMING=0        ./WOTS2.sh          # Timing aus (etwas schneller)
 #   WOTS2_TRACE_CULL=1    ./WOTS2.sh          # Cull-Statistik wieder an
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
@@ -499,6 +505,7 @@ log_flag WOTS2_TRACE_CULL  "Cull-Statistik an"
 log_flag WOTS2_PERF_TRACE  "Perf-Trace an"
 log_flag WOTS2_PAD_DIAG    "Stick-Diagnose an"
 log_flag WOTS2_SHADER_CACHE "Shader-Cache an"
+log_flag WOTS2_TIMING      "Frame-Timing an"
 if [ -n "${WOTS2_PERSISTENT_BUFFERS:-}" ]; then
     log "  WOTS2_PERSISTENT_BUFFERS=${WOTS2_PERSISTENT_BUFFERS}  ->  WARNUNG, sollte unset sein"
 else
@@ -824,8 +831,9 @@ fi
 if [ -n "${WOTS2_PERF_TRACE:-}" ] && [ -s "$WOTS2_STDOUT" ]; then
     PERF_LINES=$(grep -c '^\[perf\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
     CULL_LINES=$(grep -c '^\[cull\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
+    TIMING_LINES=$(grep -c '^\[timing\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
     log ""
-    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES"
+    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES timing=$TIMING_LINES"
     if [ "$PERF_LINES" -gt 0 ]; then
         log ""
         log "Letzte 20 [perf]-Zeilen:"
@@ -835,6 +843,11 @@ if [ -n "${WOTS2_PERF_TRACE:-}" ] && [ -s "$WOTS2_STDOUT" ]; then
         log ""
         log "Letzte 5 [cull]-Zeilen:"
         grep '^\[cull\]' "$WOTS2_STDOUT" | tail -5 | log_pipe
+    fi
+    if [ "$TIMING_LINES" -gt 0 ]; then
+        log ""
+        log "Letzte 10 [timing]-Zeilen:"
+        grep '^\[timing\]' "$WOTS2_STDOUT" | tail -10 | log_pipe
     fi
 fi
 
