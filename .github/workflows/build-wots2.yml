@@ -119,6 +119,10 @@ jobs:
             else echo ""; fi
           }
 
+          # ════════════════════════════════════════════════════════════
+          # BESTEHENDE PATCHES (unveraendert)
+          # ════════════════════════════════════════════════════════════
+
           # ── Shader-Version auf GLES 3.2 ─────────────────────────────
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
@@ -151,11 +155,6 @@ jobs:
           S=$(find_script wots2-gs-batch-2d.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-batch-2d.py nicht gefunden)"
-
-          # ── 3D-Merge (wots2-merge-3d-draws.py) ──────────────────────
-          S=$(find_script wots2-merge-3d-draws.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-merge-3d-draws.py nicht gefunden)"
 
           # ── Splash (v2, nur gs.cpp) ─────────────────────────────────
           S=$(find_script wots2-gs-splash.py)
@@ -209,16 +208,6 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/map_collision.cpp; } \
                     || echo "  (wots2-map-collision-cell-cache.py nicht gefunden)"
 
-          # ── NPC-LOD (wots2-npc-lod-closer.py) ───────────────────────
-          S=$(find_script wots2-npc-lod-closer.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
-                    || echo "  (wots2-npc-lod-closer.py nicht gefunden)"
-
-          # ── NPC-Max-Dist (wots2-npc-max-dist.py, optional) ──────────
-          S=$(find_script wots2-npc-max-dist.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
-                    || echo "  (wots2-npc-max-dist.py nicht gefunden)"
-
           # ── FX-Scale ────────────────────────────────────────────────
           S=$(find_script wots2-fx-scale.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/world_effects.cpp; } \
@@ -238,6 +227,54 @@ jobs:
           S=$(find_script patch_config_defaults.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (patch_config_defaults.py nicht gefunden)"
+
+          # ════════════════════════════════════════════════════════════
+          # NEUE PATCHES (Flaschenhals-Optimierung)
+          # ════════════════════════════════════════════════════════════
+
+          # ── 3D-Draw-Merge ───────────────────────────────────────────
+          # Fasst aufeinanderfolgende draw_mesh()-Aufrufe mit gleicher
+          # Textur/Primitive/Owner zusammen. Weniger glBufferData und
+          # glDrawArrays; TriangleStrips mit Degenerate-Stitch.
+          # WOTS2_NO_MERGE=1 schaltet ab.
+          S=$(find_script wots2-merge-3d-draws.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-merge-3d-draws.py nicht gefunden)"
+
+          # ── Bump-Mapping abschaltbar ────────────────────────────────
+          # WOTS2_NO_BUMP=1 zwingt uBump.x=0, bump_light() wird im
+          # Fragment-Shader uebersprungen (2-4 Texture-Lookups/px).
+          S=$(find_script wots2-gs-no-bump.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-no-bump.py nicht gefunden)"
+
+          # ── Punktlichter-Limit ──────────────────────────────────────
+          # WOTS2_LIGHTS_MAX=N (Default 4): wie viele Punktlichter pro
+          # Frame an den Shader hochgeladen werden. Der Shader iteriert
+          # bis uLights, das C++ setzt es. Weniger Pixel-Arbeit im Map-Pass.
+          S=$(find_script wots2-gs-lights-cap.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
+                    || echo "  (wots2-gs-lights-cap.py nicht gefunden)"
+
+          # ── NPC-LOD naeher ──────────────────────────────────────────
+          # LOD-2-Umschaltschwelle von 12.0 auf 8.0 Weltunits.
+          # WOTS2_NPC_LOD_DIST=N setzt sie.
+          S=$(find_script wots2-npc-lod-closer.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
+                    || echo "  (wots2-npc-lod-closer.py nicht gefunden)"
+
+          # ── NPC-Max-Dist (optional, Default aus) ────────────────────
+          # WOTS2_NPC_MAX_DIST=N: harte Obergrenze. 0 = aus.
+          S=$(find_script wots2-npc-max-dist.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
+                    || echo "  (wots2-npc-max-dist.py nicht gefunden)"
+
+          # ── NEON mat_mul in hle.cpp ─────────────────────────────────
+          # 4 Zeilen-Akkumulatoren mit vmlaq_n_f32 statt 64 Skalar-Mults.
+          # Bitidentisch; die heisseste Matrix-Funktion im Port.
+          S=$(find_script wots2-hle-neon-matmul.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
+                    || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
           echo "== Patches fertig =="
 
