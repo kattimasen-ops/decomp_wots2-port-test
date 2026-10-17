@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""patches/wots2-frame-timing.py  (v1)
+"""patches/wots2-frame-timing.py  (v2)
 
 Misst mit CLOCK_MONOTONIC die Zeit in jedem CharaMgr-Schritt und loggt
 alle 30 Frames eine [timing]-Zeile. Kein Eingriff in die Spiellogik.
 
-Abschaltbar mit WOTS2_TIMING=0 (Default: an, weil der Overhead minimal ist:
-ein Paar clock_gettime-Aufrufe pro Step, ~1 µs pro Frame).
+v2 behebt den Compile-Fehler aus v1:
+  v1 fügte nur <ctime> ein, aber der HELPER nutzt auch getenv (aus
+  <cstdlib>) und printf/fflush/stdout (aus <cstdio>). chara_mgr.cpp
+  hatte diese Includes nicht, also brach der Build ab.
+
+v2 prüft vor dem Einfügen, ob die Includes bereits vorhanden sind, und
+liefert sie sonst als Block mit. Idempotent über den Marker.
 
 Rollback: WOTS2_TIMING=0 in der WOTS2.sh.
 
-Idempotent: Marker wots2_frame_timing_v1.
+Marker: wots2_frame_timing_v1 (bleibt gleich: v1 und v2 sind sich
+über den Marker einig; die Marker-Prüfung erkennt also auch einen
+alten v1-Stand und bricht dann nicht doppelt ein).
 """
 import sys, pathlib, re
 
@@ -19,6 +26,8 @@ HELPER = r'''
 // [WOTS2-PORT] wots2_frame_timing_v1
 // Misst die Zeit in jedem CharaMgr-Schritt. Loggt alle 30 Frames eine
 // [timing]-Zeile. Kein Eingriff in die Spiellogik.
+#include <cstdio>
+#include <cstdlib>
 #include <ctime>
 static u64 wots2_timing_now_ns() {
     struct timespec ts;
@@ -84,10 +93,16 @@ def patch(path):
     if MARKER in t:
         print("  bereits gepatcht.")
         return
-    if "#include <cstddef>" not in t:
-        print("  FEHLER: '#include <cstddef>' nicht gefunden.")
+    anchor = None
+    for cand in ("#include <cstddef>", "#include <cstring>", "#include <initializer_list>"):
+        if cand in t:
+            anchor = cand
+            break
+    if anchor is None:
+        print("  FEHLER: kein #include-Anker in chara_mgr.cpp gefunden.")
         sys.exit(1)
-    t = t.replace("#include <cstddef>", HELPER + "\n#include <cstddef>", 1)
+    t = t.replace(anchor, HELPER + "\n" + anchor, 1)
+    print(f"  Includes + HELPER vor {anchor!r} eingefuegt.")
 
     steps = [
         ("CharaMgr_Update",    "wots2_timing_update"),
@@ -110,23 +125,32 @@ def patch(path):
         sys.exit(1)
     print("  CharaMgr_Draw: Zeitmessung eingebaut.")
 
-    # Add the report call at the end of CharaMgr_Draw
-    m = re.search(r'(void CharaMgr_Draw\(CharaMgr\* mgr, int pass\)\s*\{.*?)\n\s*if \(wots2_timing_enabled\(\)\) wots2_timing_draw', t, re.DOTALL)
-    if m:
-        insert_at = m.end()
-        # find end of the closing `}` of the Draw function
-        search_from = insert_at
-        depth = 0
-        i = search_from
-        while i < len(t):
-            if t[i] == '{':
-                depth += 1
-            elif t[i] == '}':
-                if depth == 0:
-                    break
-                depth -= 1
-            i += 1
-        t = t[:i] + "\n    wots2_timing_report();\n" + t[i:]
+    # wots2_timing_report() am Ende von CharaMgr_Draw einfuegen, direkt vor
+    # der schliessenden Klammer der Funktion.
+    m = re.search(
+        r'(void CharaMgr_Draw\(CharaMgr\* mgr, int pass\)\s*\{.*?)'
+        r'(\n\s*if \(wots2_timing_enabled\(\)\) wots2_timing_draw \+= wots2_timing_now_ns\(\) - _wts2_t0;\n)',
+        t, re.DOTALL)
+    if not m:
+        print("  FEHLER: CharaMgr_Draw-Wrapper nicht wiedergefunden (Report-Einfuegen).")
+        sys.exit(1)
+    insert_at = m.end(2)
+    # Die schliessende } dieser Funktion finden.
+    depth = 1
+    i = insert_at
+    while i < len(t) and depth > 0:
+        if t[i] == '{':
+            depth += 1
+        elif t[i] == '}':
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    if depth != 0:
+        print("  FEHLER: CharaMgr_Draw-Klammer nicht gefunden.")
+        sys.exit(1)
+    t = t[:i] + "\n    wots2_timing_report();\n" + t[i:]
+    print("  wots2_timing_report() am Ende von CharaMgr_Draw eingebaut.")
 
     t += "\n/* " + MARKER + " */\n"
     p.write_text(t, encoding="utf-8")
