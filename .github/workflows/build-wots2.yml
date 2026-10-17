@@ -119,7 +119,7 @@ jobs:
             else echo ""; fi
           }
 
-          # ══ BESTEHENDE PATCHES (unverändert, im 15-FPS-Build enthalten) ══
+          # ══ BESTEHENDE PATCHES (unverändert) ═════════════════════════
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
@@ -160,8 +160,7 @@ jobs:
 
           echo "  (wots2-persistent-buffers.py — AUS, Ursache des schwarzen Bildes)"
           echo "  (wots2-merge-3d-draws.py — AUS: kann strukturell nie greifen)"
-          echo "  (wots2-gs-orphan-vbo.py — AUS: auf Mali-G31 40× langsamer)"
-          echo "  (wots2-chara-shadow-interval.py — AUS: Schatten flackerte)"
+          echo "  (wots2-gs-orphan-vbo.py — AUS: auf Mali-G31 40x langsamer)"
 
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
@@ -202,47 +201,45 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (patch_config_defaults.py nicht gefunden)"
 
-          # ══ NEUE PATCHES, die garantiert nicht langsamer machen ════
-
-          # Perf-Trace v3: nur printf, passiv
+          # ══ SICHERE ZUSATZ-PATCHES ══════════════════════════════════
           S=$(find_script wots2-gs-perf-trace-v3.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-perf-trace-v3.py nicht gefunden)"
 
-          # State-Dedup v2: seltener State setzen, kann nicht langsamer sein
           S=$(find_script wots2-gs-state-dedup.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-state-dedup.py nicht gefunden)"
 
-          # Bump-Mapping abschaltbar
           S=$(find_script wots2-gs-no-bump.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-no-bump.py nicht gefunden)"
 
-          # Punktlichter-Limit
           S=$(find_script wots2-gs-lights-cap.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-lights-cap.py nicht gefunden)"
 
-          # NPC-LOD
           S=$(find_script wots2-npc-lod-closer.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
                     || echo "  (wots2-npc-lod-closer.py nicht gefunden)"
 
-          # NPC-Max-Dist
           S=$(find_script wots2-npc-max-dist.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
                     || echo "  (wots2-npc-max-dist.py nicht gefunden)"
 
-          # NEON mat_mul
           S=$(find_script wots2-hle-neon-matmul.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
-          # Pose-Pool v2
           S=$(find_script wots2-chara-pose-pool.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
+
+          # ══ NEUER PATCH: MAP-BATCHING ══════════════════════════════
+          # Modifiziert 4 Dateien (model.h, gs.h, model.cpp, gs.cpp).
+          # Wird mit dem Repo-Root als Argument aufgerufen.
+          S=$(find_script wots2-map-batching.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
+                    || echo "  (wots2-map-batching.py nicht gefunden — alter Pfad)"
 
           echo "== Patches fertig =="
 
