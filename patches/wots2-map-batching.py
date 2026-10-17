@@ -1,127 +1,119 @@
 #!/usr/bin/env python3
 """
-patches/wots2-map-batching.py
+patches/wots2-map-batching.py  (v2, robust pro-Schritt)
 
 Batches map meshes by (texture, bias) instead of (texture, bias, tile).
-Ranges within a batch keep per-tile bounding boxes; culling happens per range
-at draw time.
+Per-tile vertex ranges in each batch keep culling granularity.
 
-The single glBufferData per batch replaces ~N per-tile glBufferData calls.
-For 124 draws in the town that's ~124 buffer uploads down to ~15.
+v2 Prüft jeden Schritt einzeln gegen den tatsächlichen Code-Zustand.
+Partial angewendete v1-Patches werden reparieren statt dupliziert oder
+übersprungen.
 
-Files changed (idempotent, marker wots2_map_batching_v1):
-  include/native/model.h    — Batch struct gets `ranges`
-  include/hal/gs.h          — MeshRange struct, draw_mesh_ranged decl
-  src/native/model.cpp      — batching logic + ranged draw call
-  src/hal/gs.cpp            — draw_mesh_ranged impl, ranged Op::Mesh handling
+WOTS2_NO_MAP_BATCHING=1 fällt auf den ungebatchten Pfad zurück
+(langsamer als vor dem Patch, aber korrektes Bild).
 
-WOTS2_NO_MAP_BATCHING=1 disables the ranged path (map draws as one batch,
-no per-tile culling — correct image, slower than pre-patch).
+Modifiziert:
+  include/native/model.h
+  include/hal/gs.h
+  src/native/model.cpp
+  src/hal/gs.cpp
 
-Called with the repo root:
+Aufruf mit Repo-Root:
     python3 wots2-map-batching.py .
 """
 import sys
 import pathlib
 import re
 
-MARKER = "wots2_map_batching_v1"
 
-
-# ══════════════════════════════════════════════════════════════════════════
 def patch_h_model_h(root):
     path = root / "include" / "native" / "model.h"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    if MARKER in t:
-        print(f"  {path.name}: bereits gepatcht.")
+    if "std::vector<hal::gs::MeshRange> ranges;" in t:
+        print(f"  {path.name}: bereits vollständig.")
         return True
-
     old = '''    struct Batch {
         u32 tex = 0;
         int bias = 0;
-        int tile = 0;               // a map's: which 16 × 16 square it lies in (so that it can be culled)
+        int tile = 0;
         bool overlay = false;
         std::vector<hal::gs::Vtx3> verts;
     };'''
-    new = '''    // wots2_map_batching_v1: a map's batch is keyed only by (tex, bias);
-    // `ranges` carries per-tile vertex ranges used for culling.
-    struct Batch {
+    new = '''    struct Batch {
         u32 tex = 0;
         int bias = 0;
         bool overlay = false;
         std::vector<hal::gs::Vtx3> verts;
-        std::vector<hal::gs::MeshRange> ranges;  // empty = draw all verts
+        std::vector<hal::gs::MeshRange> ranges;
     };'''
     if old not in t:
         print(f"  FEHLER: Batch-Struct in {path.name} nicht gefunden", file=sys.stderr)
         return False
     t = t.replace(old, new, 1)
     path.write_text(t)
-    print(f"  {path.name}: Batch um ranges erweitert.")
+    print(f"  {path.name}: Batch erweitert.")
     return True
 
 
-# ══════════════════════════════════════════════════════════════════════════
 def patch_h_gs_h(root):
     path = root / "include" / "hal" / "gs.h"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    if MARKER in t:
-        print(f"  {path.name}: bereits gepatcht.")
-        return True
+    changed = False
 
-    # 1. MeshRange after Vtx3
-    m = re.search(r'(struct\s+Vtx3\s*\{[^{}]*\};)', t)
-    if not m:
-        print(f"  FEHLER: struct Vtx3 in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    decl = m.group(1)
-    newdecl = decl + '''
+    if "struct MeshRange" not in t:
+        m = re.search(r'(struct\s+Vtx3\s*\{[^{}]*\};)', t)
+        if not m:
+            print(f"  FEHLER: struct Vtx3 in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        decl = m.group(1)
+        newdecl = decl + '''
 
-// wots2_map_batching_v1
 struct MeshRange {
-    u32 first;      // vertex offset within the batch
-    u32 count;      // vertex count
-    int tile;       // grouping tag (used by model batching, ignored by gs)
-    float box[6];   // world AABB: lo xyz then hi xyz
+    u32 first;
+    u32 count;
+    int tile;
+    float box[6];
 };'''
-    t = t.replace(decl, newdecl, 1)
+        t = t.replace(decl, newdecl, 1)
+        changed = True
 
-    # 2. draw_mesh_ranged after draw_mesh
-    m = re.search(r'(void\s+draw_mesh\s*\([^;{}]*\)\s*;)', t)
-    if not m:
-        print(f"  FEHLER: void draw_mesh(...) in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    dm = m.group(1)
-    newdm = dm + '''
+    if "void draw_mesh_ranged(" not in t:
+        m = re.search(r'(void\s+draw_mesh\s*\([^;{}]*\)\s*;)', t)
+        if not m:
+            print(f"  FEHLER: void draw_mesh(...) in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        dm = m.group(1)
+        newdm = dm + '''
 
-// wots2_map_batching_v1
 void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
                       const MeshRange* ranges, int range_count);'''
-    t = t.replace(dm, newdm, 1)
+        t = t.replace(dm, newdm, 1)
+        changed = True
 
-    path.write_text(t)
-    print(f"  {path.name}: MeshRange + draw_mesh_ranged hinzugefuegt.")
+    if changed:
+        path.write_text(t)
+        print(f"  {path.name}: MeshRange/draw_mesh_ranged hinzugefügt.")
+    else:
+        print(f"  {path.name}: bereits vollständig.")
     return True
 
 
-# ══════════════════════════════════════════════════════════════════════════
 def patch_cpp_model(root):
     path = root / "src" / "native" / "model.cpp"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    if MARKER in t:
-        print(f"  {path.name}: bereits gepatcht.")
+    if "draw_mesh_ranged(batch.tex" in t:
+        print(f"  {path.name}: bereits vollständig.")
         return True
 
-    # 1. Batch key: drop tile, add ranges
     old = '''            Batch* batch = nullptr;
             const int tile = fixed && !strip.verts.empty()
                            ? (int)floorf(strip.verts[0].p1[0] / 16.0f) * 4096 + (int)floorf(strip.verts[0].p1[2] / 16.0f)
@@ -144,9 +136,7 @@ def patch_cpp_model(root):
                 batch->tile = tile;
                 batch->overlay = pass == 1;
             }'''
-    new = '''            // wots2_map_batching_v1: batches group by (tex, bias);
-            // tile info lives in `ranges`.
-            Batch* batch = nullptr;
+    new = '''            Batch* batch = nullptr;
             const int tile = fixed && !strip.verts.empty()
                            ? (int)floorf(strip.verts[0].p1[0] / 16.0f) * 4096 + (int)floorf(strip.verts[0].p1[2] / 16.0f)
                            : 0;
@@ -190,7 +180,6 @@ def patch_cpp_model(root):
         return False
     t = t.replace(old, new, 1)
 
-    # 2. Vertex pushes routed through push_ranged
     old = '''                const hal::gs::Vtx3 point = {p[0], p[1], p[2], v.u, v.v, rgba};
                 if (strip.list) {
                     batch->verts.push_back(point);
@@ -205,7 +194,6 @@ def patch_cpp_model(root):
                 }
                 index++;'''
     new = '''                const hal::gs::Vtx3 point = {p[0], p[1], p[2], v.u, v.v, rgba};
-                // wots2_map_batching_v1
                 auto push_ranged = [&](const hal::gs::Vtx3& p3) {
                     batch->verts.push_back(p3);
                     if (current_range) {
@@ -235,7 +223,6 @@ def patch_cpp_model(root):
         return False
     t = t.replace(old, new, 1)
 
-    # 3. Ranged draw at the end
     old = '''    for (const Batch& batch : batches) {
         if (batch.verts.empty())
             continue;
@@ -243,7 +230,7 @@ def patch_cpp_model(root):
         hal::gs::set_overlay(batch.overlay);
         hal::gs::draw_mesh(batch.tex, batch.verts.data(), (int)batch.verts.size(), hal::gs::Prim::Triangles);
     }'''
-    new = '''    const bool no_batch = getenv("WOTS2_NO_MAP_BATCHING") != nullptr;   // wots2_map_batching_v1
+    new = '''    const bool no_batch = getenv("WOTS2_NO_MAP_BATCHING") != nullptr;
     for (const Batch& batch : batches) {
         if (batch.verts.empty())
             continue;
@@ -261,63 +248,73 @@ def patch_cpp_model(root):
         return False
     t = t.replace(old, new, 1)
 
-    t = t.replace('#include "native/model.h"',
-                  '#include "native/model.h"\n// ' + MARKER, 1)
     path.write_text(t)
     print(f"  {path.name}: Batching + ranged draw.")
     return True
 
 
-# ══════════════════════════════════════════════════════════════════════════
 def patch_cpp_gs(root):
     path = root / "src" / "hal" / "gs.cpp"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    if MARKER in t:
-        print(f"  {path.name}: bereits gepatcht.")
-        return True
+    applied = 0
+    skipped = 0
 
-    # 1. kRanged flag
-    old = 'enum : u8 { kHasZ = 1, kUvRect = 2, kFrameTex = 4, kSpan = 8 };'
-    new = 'enum : u8 { kHasZ = 1, kUvRect = 2, kFrameTex = 4, kSpan = 8, kRanged = 16 };  // wots2_map_batching_v1'
-    if old not in t:
-        print(f"  FEHLER: Flag-Enum in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    t = t.replace(old, new, 1)
+    # Step 1: kRanged flag
+    if "kRanged = 16" in t:
+        skipped += 1
+    else:
+        old = 'enum : u8 { kHasZ = 1, kUvRect = 2, kFrameTex = 4, kSpan = 8 };'
+        new = 'enum : u8 { kHasZ = 1, kUvRect = 2, kFrameTex = 4, kSpan = 8, kRanged = 16 };'
+        if old not in t:
+            print(f"  FEHLER: Flag-Enum in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        t = t.replace(old, new, 1)
+        applied += 1
 
-    # 2. Frame::ranges3
-    old = '''    std::vector<Vertex3> v3;
+    # Step 2: Frame::ranges3
+    if "std::vector<hal::gs::MeshRange> ranges3;" in t:
+        skipped += 1
+    else:
+        old = '''    std::vector<Vertex3> v3;
     std::unordered_map<u64, std::vector<u32>> index;'''
-    new = '''    std::vector<Vertex3> v3;
-    std::vector<hal::gs::MeshRange> ranges3;   // wots2_map_batching_v1
+        new = '''    std::vector<Vertex3> v3;
+    std::vector<hal::gs::MeshRange> ranges3;
     std::unordered_map<u64, std::vector<u32>> index;'''
-    if old not in t:
-        print(f"  FEHLER: Frame-Struct in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    t = t.replace(old, new, 1)
+        if old not in t:
+            print(f"  FEHLER: Frame-Struct in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        t = t.replace(old, new, 1)
+        applied += 1
 
-    # 3. Frame::clear
-    old = 'cmds.clear(); v2.clear(); v3.clear(); index.clear();'
-    new = 'cmds.clear(); v2.clear(); v3.clear(); ranges3.clear(); index.clear();'
-    if old not in t:
-        print(f"  FEHLER: Frame::clear in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    t = t.replace(old, new, 1)
+    # Step 3: Frame::clear
+    if "ranges3.clear()" in t:
+        skipped += 1
+    else:
+        old = 'cmds.clear(); v2.clear(); v3.clear(); index.clear();'
+        new = 'cmds.clear(); v2.clear(); v3.clear(); ranges3.clear(); index.clear();'
+        if old not in t:
+            print(f"  FEHLER: Frame::clear in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        t = t.replace(old, new, 1)
+        applied += 1
 
-    # 4. draw_mesh_ranged after draw_mesh
-    old = '''    c.owner = s_recOwner;
+    # Step 4: draw_mesh_ranged definition
+    if "void draw_mesh_ranged(u32 tex, const Vtx3* verts" in t:
+        skipped += 1
+    else:
+        old = '''    c.owner = s_recOwner;
     c.who = s_recWho;
 }
 
 // (Kept as the game gave them — screen positions with a depth each, and
 // turned into clip space when played.)'''
-    new = '''    c.owner = s_recOwner;
+        new = '''    c.owner = s_recOwner;
     c.who = s_recWho;
 }
 
-// wots2_map_batching_v1
 void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
                       const MeshRange* ranges, int range_count) {
     const u32 first = (u32)s_cur.v3.size();
@@ -354,13 +351,17 @@ void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
 
 // (Kept as the game gave them — screen positions with a depth each, and
 // turned into clip space when played.)'''
-    if old not in t:
-        print(f"  FEHLER: draw_mesh-Ende in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    t = t.replace(old, new, 1)
+        if old not in t:
+            print(f"  FEHLER: draw_mesh-Ende in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        t = t.replace(old, new, 1)
+        applied += 1
 
-    # 5. Ranged handling in Op::Mesh
-    old = '''        case Op::Mesh: {
+    # Step 5: Op::Mesh ranged handling
+    if "if ((c.flags & kRanged) && !s_no_map_batching)" in t:
+        skipped += 1
+    else:
+        old = '''        case Op::Mesh: {
             if (culled(c, before)) {
                 s_culled++;
                 break;
@@ -376,12 +377,11 @@ void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
             }
             glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)c.count * sizeof(Vertex3)), v, GL_STREAM_DRAW);
             glDrawArrays(gl_prim(c.prim), 0, c.count);'''
-    new = '''        case Op::Mesh: {
+        new = '''        case Op::Mesh: {
             if (culled(c, before)) {
                 s_culled++;
                 break;
             }
-            // wots2_map_batching_v1: ranged path
             static const bool s_no_map_batching = getenv("WOTS2_NO_MAP_BATCHING") != nullptr;
             if ((c.flags & kRanged) && !s_no_map_batching) {
                 const hal::gs::MeshRange* ranges = f.ranges3.data() + c.i;
@@ -428,41 +428,43 @@ void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
             glBindTexture(GL_TEXTURE_2D, c.tex);
             const bool cutout = !s_overlayOn && s_cutout.count(c.tex);
             glUniform1i(s_uCutout, cutout ? 1 : 0);
-            if (c.tex != s_white) {     // model textures tile
+            if (c.tex != s_white) {
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
             }
             glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)c.count * sizeof(Vertex3)), v, GL_STREAM_DRAW);
             glDrawArrays(gl_prim(c.prim), 0, c.count);'''
-    if old not in t:
-        print(f"  FEHLER: Op::Mesh-Case in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    t = t.replace(old, new, 1)
+        if old not in t:
+            print(f"  FEHLER: Op::Mesh-Case in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        t = t.replace(old, new, 1)
+        applied += 1
 
-    # 6. Skip pairing for ranged meshes
-    old = '''        Cmd& c = f.cmds[j];
+    # Step 6: pair_frames skip
+    if "(c.flags & kRanged) || c.match < 0" in t:
+        skipped += 1
+    else:
+        old = '''        Cmd& c = f.cmds[j];
         if (c.op != Op::Mesh || c.match < 0 || p.cmds[(size_t)c.match].owner != owner || c.count == 0)
             continue;'''
-    new = '''        Cmd& c = f.cmds[j];
+        new = '''        Cmd& c = f.cmds[j];
         if (c.op != Op::Mesh || (c.flags & kRanged) || c.match < 0 ||
             p.cmds[(size_t)c.match].owner != owner || c.count == 0)
             continue;'''
-    if old not in t:
-        print(f"  FEHLER: pair_frames-Inner-Loop in {path.name} nicht gefunden", file=sys.stderr)
-        return False
-    t = t.replace(old, new, 1)
+        if old not in t:
+            print(f"  FEHLER: pair_frames in {path.name} nicht gefunden", file=sys.stderr)
+            return False
+        t = t.replace(old, new, 1)
+        applied += 1
 
-    t = t.replace('#include "hal/gs.h"',
-                  '#include "hal/gs.h"\n// ' + MARKER, 1)
     path.write_text(t)
-    print(f"  {path.name}: Ranged-Op::Mesh-Handling.")
+    print(f"  {path.name}: {applied} Schritte angewendet, {skipped} uebersprungen.")
     return True
 
 
-# ══════════════════════════════════════════════════════════════════════════
 def main():
     root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.')
-    print(f"Patche {root}")
+    print(f"Patche {root} (v2, robust)")
     ok = True
     ok &= patch_h_model_h(root)
     ok &= patch_h_gs_h(root)
