@@ -119,7 +119,7 @@ jobs:
             else echo ""; fi
           }
 
-          # ══ BESTEHENDE PATCHES ══════════════════════════════════════
+          # ══ BESTEHENDE PATCHES (unverändert, im 15-FPS-Build enthalten) ══
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
@@ -160,7 +160,7 @@ jobs:
 
           echo "  (wots2-persistent-buffers.py — AUS, Ursache des schwarzen Bildes)"
           echo "  (wots2-merge-3d-draws.py — AUS: kann strukturell nie greifen)"
-          echo "  (wots2-gs-perf-trace.py — AUS: ersetzt durch -v3)"
+          echo "  (wots2-gs-orphan-vbo.py — AUS: auf Mali-G31 viel langsamer als glBufferData)"
 
           S=$(find_script wots2-collision-neon.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/collision_world.cpp; }
@@ -195,27 +195,23 @@ jobs:
 
           S=$(find_script wots2-pad-swap.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/pad.cpp; } \
-                    || echo "  (wots2-pad-swap.py nicht gefunden — übersprungen)"
+                    || echo "  (wots2-pad-swap.py nicht gefunden)"
 
           S=$(find_script patch_config_defaults.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; } \
                     || echo "  (patch_config_defaults.py nicht gefunden)"
 
-          # ══ NEUE PATCHES ════════════════════════════════════════════
-          # Perf-Trace v3
+          # ══ NEUE PATCHES, die garantiert nicht langsamer machen ════
+
+          # Perf-Trace v3: nur printf, passiv
           S=$(find_script wots2-gs-perf-trace-v3.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-perf-trace-v3.py nicht gefunden)"
 
-          # State-Dedup v2 (statics am richtigen Ort)
+          # State-Dedup v2: seltener State setzen, kann nicht langsamer sein
           S=$(find_script wots2-gs-state-dedup.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
                     || echo "  (wots2-gs-state-dedup.py nicht gefunden)"
-
-          # Orphan-VBO
-          S=$(find_script wots2-gs-orphan-vbo.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; } \
-                    || echo "  (wots2-gs-orphan-vbo.py nicht gefunden)"
 
           # Bump-Mapping abschaltbar
           S=$(find_script wots2-gs-no-bump.py)
@@ -237,17 +233,17 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/game/chara.cpp; } \
                     || echo "  (wots2-npc-max-dist.py nicht gefunden)"
 
-          # NEON mat_mul in hle.cpp
+          # NEON mat_mul
           S=$(find_script wots2-hle-neon-matmul.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; } \
                     || echo "  (wots2-hle-neon-matmul.py nicht gefunden)"
 
-          # Pose-Pool
+          # Pose-Pool v2 (statische Puffer, kein malloc)
           S=$(find_script wots2-chara-pose-pool.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-pose-pool.py nicht gefunden)"
 
-          # Shadow-Interval
+          # Shadow-Interval: weniger Shadow-Redraws
           S=$(find_script wots2-chara-shadow-interval.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; } \
                     || echo "  (wots2-chara-shadow-interval.py nicht gefunden)"
