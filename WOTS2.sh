@@ -25,6 +25,8 @@
 #   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle (Default: 4, wirkt derzeit nicht — Draw-Parameter wird ignoriert)
 #   WOTS2_NPC_MAX_DIST=N            Harte NPC-Distanz zur Kamera, 0=aus (Default: 30)
 #   WOTS2_NPC_SIM_DIST=N            Simulations-Stillstand ab N Units zum Spieler, 0=aus (Default: 40)
+#   WOTS2_CHARA_DRAW_SKIP_DIST=N    Draw-Pfad-Vereinfachung ab N Units zum Spieler, 0=aus (Default: 30)
+#   WOTS2_CHARA_SHADOW_SKIP_DIST=N  Shadow-Pass fuer NPCs jenseits N Units ueberspringen, 0=aus (Default: 20)
 #   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 2)
 #   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
 #   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.25)
@@ -427,7 +429,10 @@ unset WOTS2_PERSISTENT_BUFFERS
 #                            Bei 12 war das Pop-in zu frueh; 30 laesst es
 #                            in der Ferne passieren.
 # WOTS2_NPC_LOD_DIST=4     — LOD-2-Schwelle. ACHTUNG: derzeit wirkungslos,
-#                            der CharaModels_Draw-Parameter wird ignoriert.
+#                            der CharaModels_Draw-Parameter ist der Draw-Pass,
+#                            nicht LOD. Der echte LOD-Mechanismus sitzt in
+#                            CharaModels_Start(phase); phase > 2 gibt es
+#                            nicht, und acquire_models() laedt fest LOD 1.
 #                            Wert bleibt fuer einen spaeteren Fix.
 # WOTS2_NPC_SIM_DIST=40    — Simulations-Stillstand. AN, seit v2.1 verbaut.
 #                            Ferne NPCs (> 40 Spieler-Units) werden in
@@ -440,12 +445,25 @@ unset WOTS2_PERSISTENT_BUFFERS
 #                            Falls in Run B noch Pop-in auftaucht:
 #                            WOTS2_NPC_SIM_DIST=34 ./WOTS2.sh
 #                            (34 > 26, also kein sichtbares Einfrieren).
+# WOTS2_CHARA_DRAW_SKIP_DIST=30 — Draw-Pfad-Vereinfachung fuer NPCs jenseits
+#                            30 Spieler-Units: keine Lights_At/ground_eased-
+#                            Abfrage, keine Per-Bone-Matrixmultiplikation
+#                            (Rest-Pose), kein Shadow-Pass. Der NPC bleibt
+#                            sichtbar, die Animation friert ein. Band
+#                            <= 30 = voll animiert und beleuchtet.
+# WOTS2_CHARA_SHADOW_SKIP_DIST=20 — Shadow-Pass fuer NPCs jenseits 20
+#                            Spieler-Units ueberspringen. Spart 2 Draw-Calls
+#                            pro NPC. Der Spieler (id 0) wird nie
+#                            uebersprungen. Bei Problemen mit fehlenden
+#                            Schatten: auf 0 setzen (Shadow fuer alle).
 # WOTS2_LIGHTS_MAX=2       — Punktlichter pro Frame (0..8 geklemmt).
 #
 # Rollback-Beispiele:
 #   WOTS2_NPC_MAX_DIST=12 ./WOTS2.sh          # Pop-in-Test aus alter Zeit
 #   WOTS2_NPC_MAX_DIST=0  ./WOTS2.sh          # Culling aus (Draw-Referenz)
 #   WOTS2_NPC_SIM_DIST=0  ./WOTS2.sh          # Sim-Patch komplett aus
+#   WOTS2_CHARA_DRAW_SKIP_DIST=0  ./WOTS2.sh  # Draw-Pfad-Patch komplett aus
+#   WOTS2_CHARA_SHADOW_SKIP_DIST=0 ./WOTS2.sh # Shadow-Skip aus (alle Schatten)
 #   WOTS2_TRACE_CULL=1    ./WOTS2.sh          # Cull-Statistik wieder an
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
@@ -454,6 +472,8 @@ export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
 export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-4}"
 export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-30}"
 export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-40}"
+export WOTS2_CHARA_DRAW_SKIP_DIST="${WOTS2_CHARA_DRAW_SKIP_DIST:-30}"
+export WOTS2_CHARA_SHADOW_SKIP_DIST="${WOTS2_CHARA_SHADOW_SKIP_DIST:-20}"
 export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-2}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
@@ -499,6 +519,8 @@ log "  WOTS2_SPLASH=$WOTS2_SPLASH"
 log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST (derzeit wirkungslos)"
 log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST"
 log "  WOTS2_NPC_SIM_DIST=$WOTS2_NPC_SIM_DIST (0 = aus)"
+log "  WOTS2_CHARA_DRAW_SKIP_DIST=$WOTS2_CHARA_DRAW_SKIP_DIST (0 = aus)"
+log "  WOTS2_CHARA_SHADOW_SKIP_DIST=$WOTS2_CHARA_SHADOW_SKIP_DIST (0 = aus)"
 log "  WOTS2_LIGHTS_MAX=$WOTS2_LIGHTS_MAX"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 
