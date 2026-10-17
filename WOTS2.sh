@@ -18,7 +18,8 @@
 #   WOTS2_PERF_TRACE=0/1            Frame-Zeiten loggen (Default: 1)
 #   WOTS2_PAD_DIAG=0/1              Stick-Diagnose ins stderr (Default: 0)
 #   WOTS2_SHADER_CACHE=0/1          Shader-Cache (Default: 1)
-#   WOTS2_TIMING=0/1                Frame-Timing ins stdout (Default: 0)
+#   WOTS2_TIMING=0/1                Frame-Timing ins stdout (Default: 1 für Analyse)
+#   WOTS2_ATIMING=0/1               App-Loop-Timing [atiming] (Default: 1 für Analyse)
 #   WOTS2_NO_BLOOM=0/1              Bloom-Pass AUS (Default: 1 = aus)
 #   WOTS2_NO_POST=0/1               Komplette Post-Kette AUS (Default: unset)
 #   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
@@ -422,7 +423,8 @@ wots2_export_flag WOTS2_TRACE_CULL  0
 wots2_export_flag WOTS2_PERF_TRACE  1
 wots2_export_flag WOTS2_PAD_DIAG    0
 wots2_export_flag WOTS2_SHADER_CACHE 1
-wots2_export_flag WOTS2_TIMING      0
+wots2_export_flag WOTS2_TIMING      1
+wots2_export_flag WOTS2_ATIMING     1
 wots2_export_flag WOTS2_NO_BLOOM    1
 unset WOTS2_PERSISTENT_BUFFERS
 
@@ -497,6 +499,7 @@ log_flag WOTS2_PERF_TRACE  "Perf-Trace an"
 log_flag WOTS2_PAD_DIAG    "Stick-Diagnose an"
 log_flag WOTS2_SHADER_CACHE "Shader-Cache an"
 log_flag WOTS2_TIMING      "Frame-Timing an ([timing] + [gtiming] + [mtiming])"
+log_flag WOTS2_ATIMING     "App-Loop-Timing an ([atiming])"
 log_flag WOTS2_NO_BLOOM    "Bloom aus"
 log_flag WOTS2_NO_POST     "Komplette Post-Kette aus (sichtbar!)"
 if [ -n "${WOTS2_PERSISTENT_BUFFERS:-}" ]; then
@@ -808,7 +811,7 @@ if [ "$WOTS2_STATUS" -gt 128 ]; then
         4)  SIGNAME="SIGILL — Illegal Instruction" ;;
         6)  SIGNAME="SIGABRT — Abort" ;;
         7)  SIGNAME="SIGBUS — Bus Error" ;;
-        8)  SIGNAME="SIGFPE — Floating-Point Exception" ;;
+        8)  SIGFPE_MSG="SIGFPE — Floating-Point Exception" ; SIGNAME="$SIGFPE_MSG" ;;
         9)  SIGNAME="SIGKILL — hart abgeschossen" ;;
         11) SIGNAME="SIGSEGV — Segmentation Fault" ;;
         15) SIGNAME="SIGTERM — regulaer beendet" ;;
@@ -819,17 +822,26 @@ fi
 
 # ── Perf-Trace-Zeilen ins Hauptlog holen ─────────────────────────────
 if [ -n "${WOTS2_PERF_TRACE:-}" ] && [ -s "$WOTS2_STDOUT" ]; then
-    PERF_LINES=$(grep -c '^\[perf\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
-    CULL_LINES=$(grep -c '^\[cull\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
-    TIMING_LINES=$(grep -c '^\[timing\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
-    GTIMING_LINES=$(grep -c '^\[gtiming\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
-    MTIMING_LINES=$(grep -c '^\[mtiming\]' "$WOTS2_STDOUT" 2>/dev/null || echo 0)
+    # Hinweis: grep -c schreibt immer den Zaehler (auch 0) und exitet bei
+    # 0 Treffern mit Code 1. Deshalb '|| true', NICHT '|| echo 0' — sonst
+    # landet "0\n0" in der Variable und zerlegt die folgende log-Zeile.
+    PERF_LINES=$(grep -c '^\[perf\]'    "$WOTS2_STDOUT" 2>/dev/null || true)
+    CULL_LINES=$(grep -c '^\[cull\]'    "$WOTS2_STDOUT" 2>/dev/null || true)
+    TIMING_LINES=$(grep -c '^\[timing\]'  "$WOTS2_STDOUT" 2>/dev/null || true)
+    GTIMING_LINES=$(grep -c '^\[gtiming\]' "$WOTS2_STDOUT" 2>/dev/null || true)
+    MTIMING_LINES=$(grep -c '^\[mtiming\]' "$WOTS2_STDOUT" 2>/dev/null || true)
+    ATIMING_LINES=$(grep -c '^\[atiming\]' "$WOTS2_STDOUT" 2>/dev/null || true)
     log ""
-    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES timing=$TIMING_LINES gtiming=$GTIMING_LINES mtiming=$MTIMING_LINES"
+    log "Diag-Zeilen in wots2-stdout.txt: perf=$PERF_LINES cull=$CULL_LINES timing=$TIMING_LINES gtiming=$GTIMING_LINES mtiming=$MTIMING_LINES atiming=$ATIMING_LINES"
     if [ "$PERF_LINES" -gt 0 ]; then
         log ""
         log "Letzte 20 [perf]-Zeilen:"
         grep '^\[perf\]' "$WOTS2_STDOUT" | tail -20 | log_pipe
+    fi
+    if [ "$ATIMING_LINES" -gt 0 ]; then
+        log ""
+        log "Letzte 10 [atiming]-Zeilen:"
+        grep '^\[atiming\]' "$WOTS2_STDOUT" | tail -10 | log_pipe
     fi
     if [ "$GTIMING_LINES" -gt 0 ]; then
         log ""
