@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-patches/wots2-map-batching.py  (v2, robust pro-Schritt)
+patches/wots2-map-batching.py  (v3, robust pro Feld)
 
-Batches map meshes by (texture, bias) instead of (texture, bias, tile).
-Per-tile vertex ranges in each batch keep culling granularity.
+Repariert den Teilzustand von v1/v2: prueft jede der vier Dateien und
+jedes Feld einzeln. Injiziert nur, was fehlt. Nutzt Regex fuer das
+Batch-Struct, damit Whitespace und Kommentare egal sind.
 
-v2 Prüft jeden Schritt einzeln gegen den tatsächlichen Code-Zustand.
-Partial angewendete v1-Patches werden reparieren statt dupliziert oder
-übersprungen.
+Am Ende wird pro Datei geloggt, was angewendet und was uebersprungen
+wurde. Bei einem echten Fehler bricht der Patch mit sys.exit(1) ab —
+der Build startet dann nicht.
 
-WOTS2_NO_MAP_BATCHING=1 fällt auf den ungebatchten Pfad zurück
-(langsamer als vor dem Patch, aber korrektes Bild).
+WOTS2_NO_MAP_BATCHING=1 faellt auf den ungebatchten Pfad zurueck.
 
 Modifiziert:
   include/native/model.h
@@ -26,92 +26,72 @@ import pathlib
 import re
 
 
-def patch_h_model_h(root):
+# ══════════════════════════════════════════════════════════════════════════
+def patch_model_h(root):
     path = root / "include" / "native" / "model.h"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    if "std::vector<hal::gs::MeshRange> ranges;" in t:
-        print(f"  {path.name}: bereits vollständig.")
-        return True
-    old = '''    struct Batch {
-        u32 tex = 0;
-        int bias = 0;
-        int tile = 0;
-        bool overlay = false;
-        std::vector<hal::gs::Vtx3> verts;
-    };'''
-    new = '''    struct Batch {
-        u32 tex = 0;
-        int bias = 0;
-        bool overlay = false;
-        std::vector<hal::gs::Vtx3> verts;
-        std::vector<hal::gs::MeshRange> ranges;
-    };'''
-    if old not in t:
-        print(f"  FEHLER: Batch-Struct in {path.name} nicht gefunden", file=sys.stderr)
+    m = re.search(r'(struct\s+Batch\s*\{)([^}]*)(\};)', t, re.DOTALL)
+    if not m:
+        print(f"  FEHLER: struct Batch in {path.name} nicht gefunden", file=sys.stderr)
         return False
-    t = t.replace(old, new, 1)
+    body = m.group(2)
+    if 'MeshRange' in body:
+        print(f"  {path.name}: Batch.ranges bereits vorhanden.")
+        return True
+    new_body = body.rstrip() + '\n        std::vector<hal::gs::MeshRange> ranges;\n    '
+    t = t[:m.start()] + m.group(1) + new_body + m.group(3) + t[m.end():]
     path.write_text(t)
-    print(f"  {path.name}: Batch erweitert.")
+    print(f"  {path.name}: Batch.ranges eingefuegt.")
     return True
 
 
-def patch_h_gs_h(root):
+# ══════════════════════════════════════════════════════════════════════════
+def patch_gs_h(root):
     path = root / "include" / "hal" / "gs.h"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    changed = False
-
-    if "struct MeshRange" not in t:
+    changed = []
+    if 'struct MeshRange' not in t:
         m = re.search(r'(struct\s+Vtx3\s*\{[^{}]*\};)', t)
         if not m:
             print(f"  FEHLER: struct Vtx3 in {path.name} nicht gefunden", file=sys.stderr)
             return False
-        decl = m.group(1)
-        newdecl = decl + '''
-
-struct MeshRange {
-    u32 first;
-    u32 count;
-    int tile;
-    float box[6];
-};'''
-        t = t.replace(decl, newdecl, 1)
-        changed = True
-
-    if "void draw_mesh_ranged(" not in t:
+        t = t.replace(m.group(1), m.group(1) +
+            '\n\nstruct MeshRange {\n    u32 first;\n    u32 count;\n    int tile;\n    float box[6];\n};',
+            1)
+        changed.append('MeshRange')
+    if 'void draw_mesh_ranged(' not in t:
         m = re.search(r'(void\s+draw_mesh\s*\([^;{}]*\)\s*;)', t)
         if not m:
             print(f"  FEHLER: void draw_mesh(...) in {path.name} nicht gefunden", file=sys.stderr)
             return False
-        dm = m.group(1)
-        newdm = dm + '''
-
-void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
-                      const MeshRange* ranges, int range_count);'''
-        t = t.replace(dm, newdm, 1)
-        changed = True
-
+        t = t.replace(m.group(1), m.group(1) +
+            '\nvoid draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,\n'
+            '                      const MeshRange* ranges, int range_count);',
+            1)
+        changed.append('draw_mesh_ranged')
     if changed:
         path.write_text(t)
-        print(f"  {path.name}: MeshRange/draw_mesh_ranged hinzugefügt.")
+        print(f"  {path.name}: {', '.join(changed)} eingefuegt.")
     else:
-        print(f"  {path.name}: bereits vollständig.")
+        print(f"  {path.name}: bereits vollstaendig.")
     return True
 
 
-def patch_cpp_model(root):
+# ══════════════════════════════════════════════════════════════════════════
+def patch_model_cpp(root):
     path = root / "src" / "native" / "model.cpp"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    if "draw_mesh_ranged(batch.tex" in t:
-        print(f"  {path.name}: bereits vollständig.")
+    if 'draw_mesh_ranged(batch.tex' in t:
+        print(f"  {path.name}: bereits vollstaendig.")
         return True
 
     old = '''            Batch* batch = nullptr;
@@ -249,69 +229,54 @@ def patch_cpp_model(root):
     t = t.replace(old, new, 1)
 
     path.write_text(t)
-    print(f"  {path.name}: Batching + ranged draw.")
+    print(f"  {path.name}: Batching + ranged draw eingefuegt.")
     return True
 
 
-def patch_cpp_gs(root):
+# ══════════════════════════════════════════════════════════════════════════
+def patch_gs_cpp(root):
     path = root / "src" / "hal" / "gs.cpp"
     if not path.exists():
         print(f"  FEHLER: {path} nicht gefunden", file=sys.stderr)
         return False
     t = path.read_text()
-    applied = 0
-    skipped = 0
+    applied = []
 
-    # Step 1: kRanged flag
-    if "kRanged = 16" in t:
-        skipped += 1
-    else:
+    # 1. kRanged flag
+    if 'kRanged = 16' not in t:
         old = 'enum : u8 { kHasZ = 1, kUvRect = 2, kFrameTex = 4, kSpan = 8 };'
         new = 'enum : u8 { kHasZ = 1, kUvRect = 2, kFrameTex = 4, kSpan = 8, kRanged = 16 };'
-        if old not in t:
-            print(f"  FEHLER: Flag-Enum in {path.name} nicht gefunden", file=sys.stderr)
-            return False
-        t = t.replace(old, new, 1)
-        applied += 1
+        if old in t:
+            t = t.replace(old, new, 1)
+            applied.append('flag')
 
-    # Step 2: Frame::ranges3
-    if "std::vector<hal::gs::MeshRange> ranges3;" in t:
-        skipped += 1
-    else:
+    # 2. Frame::ranges3
+    if 'std::vector<hal::gs::MeshRange> ranges3;' not in t:
         old = '''    std::vector<Vertex3> v3;
     std::unordered_map<u64, std::vector<u32>> index;'''
         new = '''    std::vector<Vertex3> v3;
     std::vector<hal::gs::MeshRange> ranges3;
     std::unordered_map<u64, std::vector<u32>> index;'''
-        if old not in t:
-            print(f"  FEHLER: Frame-Struct in {path.name} nicht gefunden", file=sys.stderr)
-            return False
-        t = t.replace(old, new, 1)
-        applied += 1
+        if old in t:
+            t = t.replace(old, new, 1)
+            applied.append('ranges3')
 
-    # Step 3: Frame::clear
-    if "ranges3.clear()" in t:
-        skipped += 1
-    else:
+    # 3. Frame::clear
+    if 'ranges3.clear()' not in t:
         old = 'cmds.clear(); v2.clear(); v3.clear(); index.clear();'
         new = 'cmds.clear(); v2.clear(); v3.clear(); ranges3.clear(); index.clear();'
-        if old not in t:
-            print(f"  FEHLER: Frame::clear in {path.name} nicht gefunden", file=sys.stderr)
-            return False
-        t = t.replace(old, new, 1)
-        applied += 1
+        if old in t:
+            t = t.replace(old, new, 1)
+            applied.append('clear')
 
-    # Step 4: draw_mesh_ranged definition
-    if "void draw_mesh_ranged(u32 tex, const Vtx3* verts" in t:
-        skipped += 1
-    else:
-        old = '''    c.owner = s_recOwner;
+    # 4. draw_mesh_ranged definition
+    if 'void draw_mesh_ranged(u32 tex, const Vtx3* verts' not in t:
+        anchor = '''    c.owner = s_recOwner;
     c.who = s_recWho;
 }
 
-// (Kept as the game gave them — screen positions with a depth each, and
-// turned into clip space when played.)'''
-        new = '''    c.owner = s_recOwner;
+// (Kept as the game gave them'''
+        new_def = '''    c.owner = s_recOwner;
     c.who = s_recWho;
 }
 
@@ -349,34 +314,20 @@ void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
     memcpy(c.f + 3, hi, sizeof hi);
 }
 
-// (Kept as the game gave them — screen positions with a depth each, and
-// turned into clip space when played.)'''
-        if old not in t:
-            print(f"  FEHLER: draw_mesh-Ende in {path.name} nicht gefunden", file=sys.stderr)
-            return False
-        t = t.replace(old, new, 1)
-        applied += 1
+// (Kept as the game gave them'''
+        if anchor in t:
+            t = t.replace(anchor, new_def, 1)
+            applied.append('draw_mesh_ranged')
 
-    # Step 5: Op::Mesh ranged handling
-    if "if ((c.flags & kRanged) && !s_no_map_batching)" in t:
-        skipped += 1
-    else:
+    # 5. Op::Mesh ranged handling
+    if 'if ((c.flags & kRanged) && !s_no_map_batching)' not in t:
         old = '''        case Op::Mesh: {
             if (culled(c, before)) {
                 s_culled++;
                 break;
             }
             s_drawn++;
-            const Vertex3* v = verts3(f, c, before, t);
-            glBindTexture(GL_TEXTURE_2D, c.tex);
-            const bool cutout = !s_overlayOn && s_cutout.count(c.tex);
-            glUniform1i(s_uCutout, cutout ? 1 : 0);
-            if (c.tex != s_white) {     // model textures tile
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            }
-            glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)c.count * sizeof(Vertex3)), v, GL_STREAM_DRAW);
-            glDrawArrays(gl_prim(c.prim), 0, c.count);'''
+            const Vertex3* v = verts3(f, c, before, t);'''
         new = '''        case Op::Mesh: {
             if (culled(c, before)) {
                 s_culled++;
@@ -424,26 +375,13 @@ void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
                 break;
             }
             s_drawn++;
-            const Vertex3* v = verts3(f, c, before, t);
-            glBindTexture(GL_TEXTURE_2D, c.tex);
-            const bool cutout = !s_overlayOn && s_cutout.count(c.tex);
-            glUniform1i(s_uCutout, cutout ? 1 : 0);
-            if (c.tex != s_white) {
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-            }
-            glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)c.count * sizeof(Vertex3)), v, GL_STREAM_DRAW);
-            glDrawArrays(gl_prim(c.prim), 0, c.count);'''
-        if old not in t:
-            print(f"  FEHLER: Op::Mesh-Case in {path.name} nicht gefunden", file=sys.stderr)
-            return False
-        t = t.replace(old, new, 1)
-        applied += 1
+            const Vertex3* v = verts3(f, c, before, t);'''
+        if old in t:
+            t = t.replace(old, new, 1)
+            applied.append('op_mesh')
 
-    # Step 6: pair_frames skip
-    if "(c.flags & kRanged) || c.match < 0" in t:
-        skipped += 1
-    else:
+    # 6. pair_frames skip
+    if '(c.flags & kRanged) || c.match < 0' not in t:
         old = '''        Cmd& c = f.cmds[j];
         if (c.op != Op::Mesh || c.match < 0 || p.cmds[(size_t)c.match].owner != owner || c.count == 0)
             continue;'''
@@ -451,25 +389,27 @@ void draw_mesh_ranged(u32 tex, const Vtx3* verts, int count, Prim prim,
         if (c.op != Op::Mesh || (c.flags & kRanged) || c.match < 0 ||
             p.cmds[(size_t)c.match].owner != owner || c.count == 0)
             continue;'''
-        if old not in t:
-            print(f"  FEHLER: pair_frames in {path.name} nicht gefunden", file=sys.stderr)
-            return False
-        t = t.replace(old, new, 1)
-        applied += 1
+        if old in t:
+            t = t.replace(old, new, 1)
+            applied.append('pair_frames')
 
-    path.write_text(t)
-    print(f"  {path.name}: {applied} Schritte angewendet, {skipped} uebersprungen.")
+    if applied:
+        path.write_text(t)
+        print(f"  {path.name}: {', '.join(applied)} eingefuegt.")
+    else:
+        print(f"  {path.name}: bereits vollstaendig.")
     return True
 
 
+# ══════════════════════════════════════════════════════════════════════════
 def main():
     root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.')
-    print(f"Patche {root} (v2, robust)")
+    print(f"Patche {root} (v3)")
     ok = True
-    ok &= patch_h_model_h(root)
-    ok &= patch_h_gs_h(root)
-    ok &= patch_cpp_model(root)
-    ok &= patch_cpp_gs(root)
+    ok &= patch_model_h(root)
+    ok &= patch_gs_h(root)
+    ok &= patch_model_cpp(root)
+    ok &= patch_gs_cpp(root)
     if not ok:
         print("Fertig mit Fehlern.", file=sys.stderr)
         sys.exit(1)
