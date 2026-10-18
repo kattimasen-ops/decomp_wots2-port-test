@@ -1,0 +1,48 @@
+name: Repair WOTS2 main entry points
+
+on:
+workflow_dispatch:
+push:
+paths:
+- 'patches/wots2-*.py'
+- '.github/workflows/repair-wots2-main.yml'
+
+permissions:
+contents: write
+
+jobs:
+repair:
+runs-on: ubuntu-latest
+
+```
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+
+  - name: Repair missing main entry points
+    shell: bash
+    run: |
+      shopt -s nullglob
+
+      for f in patches/wots2-*.py; do
+        if grep -qE '^def main\(' "$f" &&
+           ! grep -qE '__main__|^main\(\)' "$f"; then
+          printf '\n\nif __name__ == "__main__":\n    main()\n' >> "$f"
+          echo "repariert: $f"
+        fi
+      done
+
+  - name: Commit and push changes
+    run: |
+      if git diff --quiet -- patches/wots2-*.py; then
+        echo "Keine Reparaturen erforderlich."
+        exit 0
+      fi
+
+      git config user.name "github-actions[bot]"
+      git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      git add patches/wots2-*.py
+      git commit -m "fix: add missing WOTS2 main entry points"
+      git push
+```
