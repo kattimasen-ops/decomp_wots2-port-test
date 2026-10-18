@@ -265,7 +265,7 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/model.cpp; }
 
           S=$(find_script wots2-multithread-skinning.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/model.cpp; }
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" .; }
 
           S=$(find_script wots2-neon-matrix.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; }
@@ -289,9 +289,6 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-tex-cache.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
-
-          S=$(find_script wots2-gs-invalidate-fb.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-reduce-shadow.py)
@@ -346,7 +343,6 @@ jobs:
 
       - name: CMake konfigurieren
         run: |
-          # WICHTIG: OpenMP aktivieren!
           cmake -S . -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/aarch64-arkos.cmake" \
             -DSDL2_INSTALL_DIR="$SDL2_INSTALL" \
