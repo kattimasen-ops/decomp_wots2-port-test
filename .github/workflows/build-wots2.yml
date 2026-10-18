@@ -138,15 +138,27 @@ jobs:
           # apply <skript> <ziel>: fuehrt ein Patch-Skript aus und meldet laut,
           # wenn es fehlt oder nichts veraendert hat.
           apply() {
-            local name="$1" target="$2" S h1 h2
+            local name="$1" target="$2" S h1 h2 rc
             S=$(find_script "$name")
             if [ -z "$S" ]; then
               echo "PATCH-WARNUNG: $name FEHLT (weder in patches/ noch im Repo-Root)" | tee -a patch.log
               return 0
             fi
             echo "== $S =="        | tee -a patch.log
+            echo "   Skript: $(wc -c < "$S") Bytes, $(wc -l < "$S") Zeilen" | tee -a patch.log
+            if [ ! -e "$target" ]; then
+              echo "PATCH-WARNUNG: $name: Ziel '$target' existiert nicht" | tee -a patch.log
+            fi
+            # Haeufigster stiller Fehler: main() definiert, aber nie aufgerufen.
+            if grep -qE '^def main\(' "$S" && ! grep -qE '__main__|^main\(\)' "$S"; then
+              echo "PATCH-WARNUNG: $name definiert main(), ruft es aber nie auf - das Skript tut nichts" | tee -a patch.log
+            fi
             h1=$(tree_hash)
-            python3 "$S" "$target" 2>&1 | tee -a patch.log
+            rc=0
+            python3 -u "$S" "$target" 2>&1 | tee -a patch.log || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "PATCH-FEHLER: $name endete mit Exit-Code $rc" | tee -a patch.log
+            fi
             h2=$(tree_hash)
             if [ "$h1" = "$h2" ]; then
               echo "PATCH-WARNUNG: $name hat NICHTS veraendert" | tee -a patch.log
@@ -257,11 +269,13 @@ jobs:
 
           apply wots2-neon-particles.py src/game/world_effects.cpp
 
-          apply wots2-gs-mediump.py src/hal/gs.cpp
+          # DEAKTIVIERT (redundant zu wots2-gles-precision.py, Anker passt nicht zum umgestellten Shader):
+          # apply wots2-gs-mediump.py src/hal/gs.cpp
 
           apply wots2-gs-no-mipmap.py src/hal/gs.cpp
 
-          apply wots2-gs-fast-vbo.py src/hal/gs.cpp
+          # DEAKTIVIERT (fuegt nur einen GL-Aufruf hinzu; Ring-Puffer-Version folgt mit gs.cpp-Auszug):
+          # apply wots2-gs-fast-vbo.py src/hal/gs.cpp
 
           apply wots2-gs-backface-cull.py src/hal/gs.cpp
 
