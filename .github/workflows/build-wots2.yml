@@ -119,6 +119,13 @@ jobs:
             else echo ""; fi
           }
 
+          # ══ KRITISCHE ENGINE-PATCHES (MÜSSEN ZUERST LAUFEN) ══════════
+          S=$(find_script wots2-app-deltatime.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; }
+
+          S=$(find_script wots2-sdl2-doublebuffer.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+
           # ══ BESTEHENDE PATCHES ═════════════════════════════════════
           S=$(find_script wots2-gles.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
@@ -275,24 +282,14 @@ jobs:
           S=$(find_script wots2-gs-fast-vbo.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # (16) Backface Culling
           S=$(find_script wots2-gs-backface-cull.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # (17) Texture Cache
           S=$(find_script wots2-gs-tex-cache.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
-          # (18) Shadow Map Size
           S=$(find_script wots2-reduce-shadow.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; }
-
-          # ══ NEUE KRITISCHE FIXES ═══════════════════════════════════
-          S=$(find_script wots2-app-deltatime.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; }
-
-          S=$(find_script wots2-sdl2-doublebuffer.py)
-          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           echo "== Patches fertig =="
 
