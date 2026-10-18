@@ -257,7 +257,9 @@ jobs:
 
           apply wots2-fast-fades.py src/native/hle.cpp
 
-          apply wots2-chara-draw-cull.py src/game/chara.cpp
+          # DEAKTIVIERT (spart nur Skeleton_UpdateWorld/Swing verdeckter Figuren, unter ca. 0,3 ms;
+          # Bone-Matrizen werden schon im Update-Schritt berechnet, Haar-/Stoff-Zustand friert ein):
+          # apply wots2-chara-draw-cull.py src/game/chara.cpp
 
           apply wots2-no-sword-shadow.py src/game/chara.cpp
 
@@ -274,8 +276,7 @@ jobs:
 
           apply wots2-gs-no-mipmap.py src/hal/gs.cpp
 
-          # DEAKTIVIERT (fuegt nur einen GL-Aufruf hinzu; Ring-Puffer-Version folgt mit gs.cpp-Auszug):
-          # apply wots2-gs-fast-vbo.py src/hal/gs.cpp
+          apply wots2-gs-fast-vbo.py src/hal/gs.cpp
 
           apply wots2-gs-backface-cull.py src/hal/gs.cpp
 
