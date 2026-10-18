@@ -264,6 +264,9 @@ jobs:
           S=$(find_script wots2-neon-skinning.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/model.cpp; }
 
+          S=$(find_script wots2-multithread-skinning.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/model.cpp; }
+
           S=$(find_script wots2-neon-matrix.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle.cpp; }
 
@@ -286,6 +289,9 @@ jobs:
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-gs-tex-cache.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+
+          S=$(find_script wots2-gs-invalidate-fb.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
 
           S=$(find_script wots2-reduce-shadow.py)
@@ -340,6 +346,7 @@ jobs:
 
       - name: CMake konfigurieren
         run: |
+          # WICHTIG: OpenMP aktivieren!
           cmake -S . -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$GITHUB_WORKSPACE/cmake/aarch64-arkos.cmake" \
             -DSDL2_INSTALL_DIR="$SDL2_INSTALL" \
@@ -347,7 +354,9 @@ jobs:
             -DSDL2_DIR="$SDL2_INSTALL/lib/cmake/SDL2" \
             -DCMAKE_PREFIX_PATH="$SDL2_INSTALL;$SYSROOT_LIB" \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DBUILD_SHARED_LIBS=OFF
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_CXX_FLAGS="-fopenmp" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fopenmp"
 
       - name: Bauen
         run: cmake --build build -j "$JOBS"
