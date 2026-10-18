@@ -287,6 +287,13 @@ jobs:
           S=$(find_script wots2-reduce-shadow.py)
           [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/native/hle_chara.cpp; }
 
+          # ══ NEUE KRITISCHE FIXES ═══════════════════════════════════
+          S=$(find_script wots2-app-deltatime.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/engine/app.cpp; }
+
+          S=$(find_script wots2-sdl2-doublebuffer.py)
+          [ -n "$S" ] && { echo "== $S =="; python3 "$S" src/hal/gs.cpp; }
+
           echo "== Patches fertig =="
 
       - name: Gepatchte Quelldateien sichern
