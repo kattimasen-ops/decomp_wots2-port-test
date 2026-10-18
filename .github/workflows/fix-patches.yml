@@ -1,0 +1,6 @@
+for f in patches/wots2-*.py; do
+  if grep -qE '^def main\(' "$f" && ! grep -qE '__main__|^main\(\)' "$f"; then
+    printf '\n\nif __name__ == "__main__":\n    main()\n' >> "$f"
+    echo "repariert: $f"
+  fi
+done
