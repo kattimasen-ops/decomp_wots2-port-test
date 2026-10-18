@@ -417,6 +417,9 @@ export MALI_BUFFER_PREALLOC=1
 
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 
+# NEU: SDL2 im stabilen Double-Buffer-Modus halten (verhindert KMSDRM-Abstürze)
+export SDL_KMSDRM_DOUBLE_BUFFER=1
+
 # ── WOTS2-Flags: NUR exportieren wenn 1, sonst unset ─────────────────────
 wots2_export_flag WOTS2_NO_CULL   0
 wots2_export_flag WOTS2_NO_BATCH  0
