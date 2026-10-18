@@ -5,16 +5,23 @@ import sys, pathlib
 p = pathlib.Path(sys.argv[1])
 t = p.read_text()
 
-# Der exakte Original-Block aus App_Run
+# 1. Entferne das alte PadMgr_Poll vor der Schleife
+old_poll = """PadMgr_Poll(PadMgr_Get());
+                    GsDevice_BeginFrame(dev);"""
+new_poll = """GsDevice_BeginFrame(dev);"""
+if old_poll in t:
+    t = t.replace(old_poll, new_poll, 1)
+
+# 2. Der exakte Original-Block aus App_Run
 anchor = """if (!Native_EditorPaused() && !SceneCall<int>(SceneOf(app->scene), kSceneUpdate))
                         break;
                     App_RenderFrame(app);"""
 
 if anchor not in t:
-    print("FEHLER: App_Run-Schleife (SceneUpdate/RenderFrame) nicht gefunden.", file=sys.stderr)
+    print("FEHLER: App_Run-Schleife nicht gefunden.", file=sys.stderr)
     sys.exit(1)
 
-# Der neue Block mit Akkumulator
+# 3. Der neue Block mit Akkumulator und PadMgr_Poll INNEN
 new_code = """// Fixed-timestep accumulator (native port)
                     {
                         static double wots2_acc = 0.0;
@@ -26,6 +33,7 @@ new_code = """// Fixed-timestep accumulator (native port)
                         wots2_acc += wots2_frame;
                         bool wots2_scene_ended = false;
                         do {
+                            PadMgr_Poll(PadMgr_Get());
                             if (!Native_EditorPaused() && !SceneCall<int>(SceneOf(app->scene), kSceneUpdate)) {
                                 wots2_scene_ended = true;
                                 break;
@@ -38,9 +46,8 @@ new_code = """// Fixed-timestep accumulator (native port)
 
 t = t.replace(anchor, new_code, 1)
 
-# Sicherstellen, dass SDL für den Performance-Counter eingebunden ist
 if "#include <SDL2/SDL.h>" not in t and "#include <SDL.h>" not in t:
     t = t.replace('#include "engine/app.h"', '#include <SDL2/SDL.h>\n#include "engine/app.h"')
 
 p.write_text(t)
-print("OK: Fixed-Timestep-Akkumulator in app.cpp eingefügt.")
+print("OK: Fixed-Timestep-Akkumulator inkl. PadMgr-Poll repariert.")
