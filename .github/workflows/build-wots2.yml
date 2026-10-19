@@ -255,7 +255,9 @@ jobs:
 
           apply wots2-collision-cache.py src/native/hle_tasks.cpp
 
-          apply wots2-fast-fades.py src/native/hle.cpp
+          # DEAKTIVIERT (wirkt nur waehrend Ueberblendungen (kein FPS-Gewinn im Spiel), 8 Streifen erzeugen sichtbares Banding):
+
+          # apply wots2-fast-fades.py src/native/hle.cpp
 
           # DEAKTIVIERT (spart nur Skeleton_UpdateWorld/Swing verdeckter Figuren, unter ca. 0,3 ms;
           # Bone-Matrizen werden schon im Update-Schritt berechnet, Haar-/Stoff-Zustand friert ein):
@@ -265,11 +267,17 @@ jobs:
 
           apply wots2-neon-skinning.py src/native/model.cpp
 
-          apply wots2-neon-matrix.py src/native/hle.cpp
+          # DEAKTIVIERT (rechnet falsch (alle 100000 Testmatrizen weichen ab) und ist ueberfluessig, mat_mul ist schon NEON):
 
-          apply wots2-neon-vecmath.py src/game/camera.cpp
+          # apply wots2-neon-matrix.py src/native/hle.cpp
 
-          apply wots2-neon-particles.py src/game/world_effects.cpp
+          # DEAKTIVIERT (Nutzen minimal, summiert in anderer Reihenfolge, falsch falls Dot() nur xyz summiert (camera.cpp unbekannt)):
+
+          # apply wots2-neon-vecmath.py src/game/camera.cpp
+
+          # DEAKTIVIERT (Nutzen minimal (FX_SCALE 0.05), schreibt 4 Floats in pos/vel (Struct-Layout unbekannt), skaliert auch die w-Lane):
+
+          # apply wots2-neon-particles.py src/game/world_effects.cpp
 
           # DEAKTIVIERT (redundant zu wots2-gles-precision.py, Anker passt nicht zum umgestellten Shader):
           # apply wots2-gs-mediump.py src/hal/gs.cpp
