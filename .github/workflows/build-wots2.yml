@@ -109,29 +109,6 @@ jobs:
           chmod 755 chdman
           file chdman
 
-      # ═══════════════════════════════════════════════════════════════
-      # REPARATUR: Patch-Skripte ohne __main__-Guard
-      # ═══════════════════════════════════════════════════════════════
-      # Mehrere Patch-Skripte definieren main(), rufen es aber nie auf.
-      # Der Build-Log zeigte dafuer bisher 12 PATCH-WARNUNG-Zeilen
-      # ("das Skript tut nichts" + "hat NICHTS veraendert"), und die
-      # betroffenen Patches waren im Binary effektiv nicht vorhanden.
-      #
-      # Dieser Step haengt die fehlende `if __name__ == "__main__": main()`
-      # Zeile an, ist idempotent (bereits reparierte Skripte werden
-      # uebersprungen) und bricht den Build mit ::error:: ab, wenn danach
-      # noch ein Skript ohne Guard dasteht.
-      #
-      # Es wird NICHTS committet: die Reparatur gilt nur fuer diesen
-      # Build-Run. Zum Persistieren im Repo entweder
-      # .github/workflows/repair-wots2-main.yml manuell triggern, oder
-      # fix-patches.yml, falls die Datei so heisst.
-      #
-      # Betroffene Skripte im letzten Build:
-      #   wots2-fast-fades.py, wots2-neon-skinning.py,
-      #   wots2-neon-matrix.py, wots2-neon-vecmath.py,
-      #   wots2-neon-particles.py, wots2-reduce-shadow.py
-      # ═══════════════════════════════════════════════════════════════
       - name: Patches reparieren (main()-Einstiegspunkte)
         shell: bash
         run: |
@@ -141,9 +118,6 @@ jobs:
           SKIPPED_ALREADY=0
           SKIPPED_NO_MAIN=0
 
-          # Der apply()-Step spaeter sucht sowohl in patches/ als auch im
-          # Repo-Root (find_script). Also decken wir hier beide Orte ab,
-          # sonst bliebe z.B. wots2-app-timing.py im Root unrepariert.
           for f in patches/wots2-*.py wots2-*.py; do
             [ -f "$f" ] || continue
 
@@ -168,8 +142,6 @@ jobs:
           echo "  schon vorhanden:   $SKIPPED_ALREADY"
           echo "  ohne def main():   $SKIPPED_NO_MAIN"
 
-          # Verifikation: nach der Reparatur darf kein Skript mehr
-          # main() definieren, ohne es aufzurufen.
           BAD=""
           for f in patches/wots2-*.py wots2-*.py; do
             [ -f "$f" ] || continue
@@ -202,8 +174,6 @@ jobs:
 
           : > patch.log
 
-          # Hash ueber alle Quelldateien: zeigt, ob ein Patch wirklich etwas aendert.
-          # (Im Container gibt es beim Checkout kein .git, 'git diff' geht nicht.)
           tree_hash() {
             find . -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.c' \
                               -o -name '*.cmake' -o -name '*.ini' \) \
@@ -213,8 +183,6 @@ jobs:
               -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16
           }
 
-          # apply <skript> <ziel>: fuehrt ein Patch-Skript aus und meldet laut,
-          # wenn es fehlt oder nichts veraendert hat.
           apply() {
             local name="$1" target="$2" S h1 h2 rc
             S=$(find_script "$name")
@@ -227,9 +195,6 @@ jobs:
             if [ ! -e "$target" ]; then
               echo "PATCH-WARNUNG: $name: Ziel '$target' existiert nicht" | tee -a patch.log
             fi
-            # Haeufigster stiller Fehler: main() definiert, aber nie aufgerufen.
-            # Der "Patches reparieren"-Step oben sollte das bereits behoben
-            # haben. Bleibt die Warnung hier, ist die Reparatur gescheitert.
             if grep -qE '^def main\(' "$S" && ! grep -qE '__main__|^main\(\)' "$S"; then
               echo "PATCH-WARNUNG: $name definiert main(), ruft es aber nie auf - das Skript tut nichts" | tee -a patch.log
             fi
@@ -345,6 +310,18 @@ jobs:
 
           apply wots2-neon-skinning.py src/native/model.cpp
 
+          # ═════════════════════════════════════════════════════════════
+          # AUFRAEUM-PATCH (2026-10-22):
+          # Die alte v1/v2-Version hat einen kaputten NEON-Block in
+          # Matrix_Multiply eingebaut, der a^T * b statt b * a rechnet.
+          # Damit war jede 3D-Transformation im Port falsch (Skelett,
+          # Kamera, Objekte, Effekte) — das ganze Bild voller
+          # zerstoerter Geometrie.
+          #
+          # Die reparierte Version entfernt diesen Block, falls er in
+          # hle.cpp steht. Wenn die Quelldatei sauber ist, ist der Patch
+          # ein No-op (PATCH-WARNUNG "hat NICHTS veraendert" im Log).
+          # ═════════════════════════════════════════════════════════════
           apply wots2-neon-matrix.py src/native/hle.cpp
 
           apply wots2-neon-vecmath.py src/game/camera.cpp
@@ -372,7 +349,6 @@ jobs:
 
           echo "== Patches fertig ==" | tee -a patch.log
 
-          # ── Zusammenfassung: alles, was nicht sauber lief, als Annotation ──
           TOTAL=$(grep -cE 'PATCH-FEHLER:|PATCH-WARNUNG:' patch.log || true)
           grep -E 'PATCH-FEHLER:|PATCH-WARNUNG:' patch.log | while IFS= read -r l; do
             echo "::warning title=Patch-Problem::$l"
@@ -472,17 +448,15 @@ jobs:
 
       - name: Kompatibilitaet pruefen (glibc, Bibliotheken)
         env:
-          MAX_GLIBC: "2.30"      # ArkOS4Clone meldet CFW_GLIBC=230
+          MAX_GLIBC: "2.30"
         run: |
           set -euo pipefail
-
           echo "== NEEDED =="
           aarch64-linux-gnu-readelf -d build/wots2 | grep NEEDED || true
           if aarch64-linux-gnu-readelf -d build/wots2 | grep -q 'libgomp'; then
             echo "::notice title=OpenMP::Binary braucht libgomp.so.1 auf dem Geraet (nicht im Bundle)."
           fi
-
-          maxver() {   # maxver GLIBC | GLIBCXX | CXXABI
+          maxver() {
             aarch64-linux-gnu-objdump -T build/wots2 \
               | { grep -oE "$1_[0-9][0-9.]*" || true; } \
               | sed "s/^$1_//" | sort -Vu | tail -1
@@ -490,7 +464,6 @@ jobs:
           G=$(maxver GLIBC);  X=$(maxver GLIBCXX);  C=$(maxver CXXABI)
           echo "Hoechste benoetigte Versionen: GLIBC=${G:-keine} GLIBCXX=${X:-keine} CXXABI=${C:-keine}"
           echo "::notice title=Symbolversionen::GLIBC ${G:-keine}, GLIBCXX ${X:-keine}, CXXABI ${C:-keine}"
-
           if [ -n "$G" ] && [ "$(printf '%s\n%s\n' "$MAX_GLIBC" "$G" | sort -V | tail -1)" != "$MAX_GLIBC" ]; then
             echo "::error title=glibc zu neu::Binary braucht GLIBC_$G, das Geraet hat nur $MAX_GLIBC"
             exit 1
