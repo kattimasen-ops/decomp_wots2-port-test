@@ -25,20 +25,41 @@
 #   WOTS2_NO_VSYNC=0/1              V-Sync AUS (Default: 1; wird seit wots2-gs-novsync.py honoriert)
 #   WOTS2_PERSISTENT_BUFFERS        NIEMALS setzen. Auf Mali-G31 kaputt.
 #
-# ── Zahlenwerte ──────────────────────────────────────────────────────────
+# ── Presets ──────────────────────────────────────────────────────────────
+#   WOTS2_PRESET=max | balanced (Standard) | quality
+#   Jeder Einzelwert darf weiter von aussen ueberschrieben werden, zum Beispiel:
+#     WOTS2_PRESET=quality WOTS2_NPC_MAX_DIST=20 ./WOTS2.sh
+#
+# ── Zahlenwerte (vom Preset gesetzt, einzeln ueberschreibbar) ────────────
+#   WOTS2_NPC_LOD_DIST=N            Fern-Modell ab N (Kamera-Distanz); wirkt seit
+#                                   wots2-npc-lod-closer v2, mit Hysterese
+#   WOTS2_NPC_MAX_DIST=N            Draw-Cull (Kamera-Distanz)
+#   WOTS2_NPC_FADE_LEN=N            Laenge der Ausblendung vor MAX_DIST (Standard 4)
+#   WOTS2_NPC_FADE_END=N            Ende der Ausblendung (Standard MAX_DIST - 0.5)
+#   WOTS2_NPC_SIM_DIST=N            Sim-Skip (Spieler-Distanz); muss ueber der
+#                                   Zeichenreichweite (MAX_DIST - 3.5) liegen
+#   WOTS2_CHARA_DRAW_SKIP_DIST=N    Rest-Pose-Zone ab N (Spieler-D., 0 = aus)
+#   WOTS2_CHARA_SHADOW_SKIP_DIST=N  Schatten nur bis N (Spieler-D.)
+#   WOTS2_SWORD_DRAW_DIST=N         Schwert-Draw-Skip (Kamera-D., 999 = aus)
+#   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame
+#   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload
+#   WOTS2_SHADOW_RES=N              Kantenlaenge der Figuren-Schatten-Textur
+#   WOTS2_FX_SCALE=N                Effekt-Anzahl
 #   WOTS2_SHADOW_INTERVAL=N         Shadow-Redraw alle N Frames (Default: 1)
-#   WOTS2_NPC_LOD_DIST=N            LOD-2-Schwelle (Default: 4, wirkt nicht)
-#   WOTS2_NPC_MAX_DIST=N            Draw-Cull (Kamera-Distanz, Default: 16)
-#   WOTS2_NPC_SIM_DIST=N            Sim-Skip (Spieler-Distanz, Default: 15)
-#   WOTS2_CHARA_DRAW_SKIP_DIST=N    Draw-Pfad-Skip (Spieler-D., Default: 10)
-#   WOTS2_CHARA_SHADOW_SKIP_DIST=N  Shadow-Skip (Spieler-D., Default: 5)
-#   WOTS2_SWORD_DRAW_DIST=N         Schwert-Draw-Skip (Kamera-D., Default: 8)
-#   WOTS2_LIGHTS_MAX=N              Punktlichter pro Frame (Default: 1)
-#   WOTS2_SHADER_LRU=N              Frames bis Shader-Unload (Default: 120)
-#   WOTS2_FX_SCALE=N                Effekt-Anzahl (Default: 0.05)
 #   WOTS2_SPLASH=N                  Splash-Dauer in Sekunden (Default: 2.5)
 #   WOTS2_KILL_TIMEOUT=N            Sekunden bis SIGKILL (Default: 3)
-#   WOTS2_LIBDIAG=0/1               LD_DEBUG-Probe (Default: 1)
+#
+# ── Launcher-Schalter ────────────────────────────────────────────────────
+#   WOTS2_ANALYSE=0/1               Timing-Logs ([timing], [gtiming], [perf] ...)
+#                                   an/aus (Default: 1). Zum Spielen auf 0 setzen.
+#   WOTS2_LIBDIAG=0/1               LD_DEBUG-Probe, startet das Spiel 5 s vorab (Default: 0)
+#   WOTS2_DMC_PERF=0/1              Speichertakt (DDR) auf 'performance' (Default: 1)
+#   WOTS2_CPU_UNCAP=0/1             scaling_max_freq auf cpuinfo_max_freq heben (Default: 0)
+#   WOTS2_HWMON=0/1                 Takte/Last/Temperatur mitloggen (Default: 1)
+#   WOTS2_HWMON_INTERVAL=N          Abtastung in Sekunden (Default: 10)
+#   WOTS2_NICE=N                    Prioritaet des Spiels per renice (Default: -5, 0 = aus)
+#   MALLOC_MMAP_THRESHOLD_ / MALLOC_TRIM_THRESHOLD_ / MALLOC_TOP_PAD_
+#                                   glibc-Speicher-Tuning, einzeln ueberschreibbar
 #
 # ── Wichtiger Hinweis zu getenv() ────────────────────────────────────────
 # Der Port prüft seine Flags mit getenv(...) != nullptr. Deshalb werden
@@ -47,7 +68,7 @@
 
 XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}
 
-export WOTS2_LIBDIAG="${WOTS2_LIBDIAG:-1}"
+export WOTS2_LIBDIAG="${WOTS2_LIBDIAG:-0}"   # 1 = Spiel startet 5 s vorab zur Bibliotheks-Diagnose
 WOTS2_KILL_TIMEOUT="${WOTS2_KILL_TIMEOUT:-3}"
 
 # ── Flag-Helfer ──────────────────────────────────────────────────────────
@@ -257,6 +278,46 @@ if [ -n "$gpu_devfreq_path" ]; then
     fi
 fi
 
+# ── Speichertakt (DMC): auf dem RK3326 teilen sich CPU und Mali den DDR-Speicher.
+# Ein trager Speichertakt-Governor bremst beide. Nur wenn der Pfad existiert und
+# 'performance' angeboten wird; die Wiederherstellung steht in restore().
+dmc_devfreq_path=""; dmc_gov_saved=""
+if [ "${WOTS2_DMC_PERF:-1}" = "1" ]; then
+    for candidate in /sys/class/devfreq/dmc /sys/class/devfreq/*dmc*; do
+        [ -d "$candidate" ] && [ -e "$candidate/governor" ] && dmc_devfreq_path="$candidate" && break
+    done
+fi
+if [ -n "$dmc_devfreq_path" ]; then
+    if [ -w "$dmc_devfreq_path/governor" ] && grep -qw performance "$dmc_devfreq_path/available_governors" 2>/dev/null; then
+        dmc_gov_saved=$(cat "$dmc_devfreq_path/governor" 2>/dev/null)
+        echo performance > "$dmc_devfreq_path/governor" 2>/dev/null || true
+        log "DMC-Governor (Speichertakt): $dmc_gov_saved -> $(cat "$dmc_devfreq_path/governor" 2>/dev/null)"
+    else
+        log "DMC gefunden ($dmc_devfreq_path), aber 'performance' nicht setzbar (verfuegbar: $(cat "$dmc_devfreq_path/available_governors" 2>/dev/null))"
+    fi
+else
+    log "DMC-devfreq nicht gefunden oder abgeschaltet (WOTS2_DMC_PERF=0)."
+fi
+
+# ── CPU-Takt: nur loggen, optional die Obergrenze aufheben ───────────────
+cpu_max_saved=""
+cpu0_cf="/sys/devices/system/cpu/cpu0/cpufreq"
+if [ -r "$cpu0_cf/cpuinfo_max_freq" ]; then
+    log "CPU0 kHz: cpuinfo_max=$(cat "$cpu0_cf/cpuinfo_max_freq" 2>/dev/null) scaling_max=$(cat "$cpu0_cf/scaling_max_freq" 2>/dev/null) cur=$(cat "$cpu0_cf/scaling_cur_freq" 2>/dev/null)"
+    if [ "$(cat "$cpu0_cf/scaling_max_freq" 2>/dev/null)" != "$(cat "$cpu0_cf/cpuinfo_max_freq" 2>/dev/null)" ]; then
+        if [ "${WOTS2_CPU_UNCAP:-0}" = "1" ] && [ -w "$cpu0_cf/scaling_max_freq" ]; then
+            cpu_max_saved=$(cat "$cpu0_cf/scaling_max_freq" 2>/dev/null)
+            for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+                [ -w "$cpu/cpufreq/scaling_max_freq" ] && \
+                    cat "$cpu/cpufreq/cpuinfo_max_freq" > "$cpu/cpufreq/scaling_max_freq" 2>/dev/null || true
+            done
+            log "CPU-Obergrenze angehoben: $cpu_max_saved -> $(cat "$cpu0_cf/scaling_max_freq" 2>/dev/null) kHz (WOTS2_CPU_UNCAP=1)"
+        else
+            log "  Hinweis: scaling_max liegt unter cpuinfo_max, die CPU taktet nicht voll hoch. Mit WOTS2_CPU_UNCAP=1 aufhebbar."
+        fi
+    fi
+fi
+
 if ! swapon --show 2>/dev/null | grep -q zram; then
     modprobe zram 2>/dev/null || true
     if [ -e /dev/zram0 ]; then
@@ -302,12 +363,12 @@ restore_services() {
 stop_service_if_active tailscaled.service
 
 saved=/tmp/wots2-clocks
-printf '%s|%s|%s\n' "$cpu_saved" "$gpu_gov_saved" "$gpu_min_saved" > "$saved" 2>/dev/null || true
+printf '%s|%s|%s|%s|%s\n' "$cpu_saved" "$gpu_gov_saved" "$gpu_min_saved" "$dmc_gov_saved" "$cpu_max_saved" > "$saved" 2>/dev/null || true
 
 restore() {
     log_section "RESTORE"
     if [ -f "$saved" ]; then
-        IFS='|' read -r cpu_gov gpu_gov gpu_min < "$saved"
+        IFS='|' read -r cpu_gov gpu_gov gpu_min dmc_gov cpu_max_old < "$saved"
         [ -n "$cpu_gov" ] && [ -n "$cpu_governor_path" ] && [ -w "$cpu_governor_path" ] && \
             echo "$cpu_gov" > "$cpu_governor_path" 2>/dev/null || true
         if [ -n "$gpu_devfreq_path" ]; then
@@ -315,6 +376,14 @@ restore() {
                 echo "$gpu_gov" > "$gpu_devfreq_path/governor" 2>/dev/null || true
             [ -n "$gpu_min" ] && [ -w "$gpu_devfreq_path/min_freq" ] && \
                 echo "$gpu_min" > "$gpu_devfreq_path/min_freq" 2>/dev/null || true
+        fi
+        [ -n "$dmc_gov" ] && [ -n "$dmc_devfreq_path" ] && [ -w "$dmc_devfreq_path/governor" ] && \
+            echo "$dmc_gov" > "$dmc_devfreq_path/governor" 2>/dev/null || true
+        if [ -n "$cpu_max_old" ]; then
+            for cpu in /sys/devices/system/cpu/cpu[0-9]*; do
+                [ -w "$cpu/cpufreq/scaling_max_freq" ] && \
+                    echo "$cpu_max_old" > "$cpu/cpufreq/scaling_max_freq" 2>/dev/null || true
+            done
         fi
         rm -f "$saved"
     fi
@@ -408,12 +477,20 @@ export WOTS2_SAVE_ROOT="$GAMEDIR/save"
 export WOTS2_NO_VSYNC=1
 export WOTS2_BUTTON_REMAP=1
 
-export MALLOC_TRIM_THRESHOLD_=131072
-export MALLOC_MMAP_THRESHOLD_=131072
+# glibc-Speicher: Wer MALLOC_MMAP_THRESHOLD_ setzt, schaltet die automatische
+# Anpassung ab. Mit 128 KB gehen alle groesseren Puffer (Frame-Vertices, Batches)
+# jedes Mal per mmap/munmap durch den Kernel und werden neu genullt. Hoehere
+# Schwellen halten sie im Heap. Alles ueberschreibbar, zum A/B-Test mit den
+# [timing]-Zeilen: z. B. MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072 ./WOTS2.sh
+export MALLOC_MMAP_THRESHOLD_="${MALLOC_MMAP_THRESHOLD_:-4194304}"
+export MALLOC_TRIM_THRESHOLD_="${MALLOC_TRIM_THRESHOLD_:-33554432}"
+export MALLOC_TOP_PAD_="${MALLOC_TOP_PAD_:-4194304}"
 
-export MALI_AFBC=1
-export MALI_MAX_ASYNC_BUFFER_COUNT=4
-export MALI_BUFFER_PREALLOC=1
+# Diese drei sind keine dokumentierten Variablen des Mali-Treibers (libmali) und
+# hatten in deinen Logs keinen nachweisbaren Effekt. Auskommentiert, nicht geloescht:
+#export MALI_AFBC=1
+#export MALI_MAX_ASYNC_BUFFER_COUNT=4
+#export MALI_BUFFER_PREALLOC=1
 
 export SDL_AUDIO_SAMPLES="${SDL_AUDIO_SAMPLES:-2048}"
 
@@ -427,11 +504,11 @@ wots2_export_flag WOTS2_NO_BUMP   1
 wots2_export_flag WOTS2_NO_SHADOW 0
 wots2_export_flag WOTS2_NO_MAP_BATCHING 0
 wots2_export_flag WOTS2_TRACE_CULL  0
-wots2_export_flag WOTS2_PERF_TRACE  1
+wots2_export_flag WOTS2_PERF_TRACE  "${WOTS2_ANALYSE:-1}"
 wots2_export_flag WOTS2_PAD_DIAG    0
 wots2_export_flag WOTS2_SHADER_CACHE 1
-wots2_export_flag WOTS2_TIMING      1
-wots2_export_flag WOTS2_ATIMING     1
+wots2_export_flag WOTS2_TIMING      "${WOTS2_ANALYSE:-1}"
+wots2_export_flag WOTS2_ATIMING     "${WOTS2_ANALYSE:-1}"
 wots2_export_flag WOTS2_NO_BLOOM    1
 unset WOTS2_PERSISTENT_BUFFERS
 
@@ -457,33 +534,36 @@ export WOTS2_NO_SHIMMER=1
 #
 # # export WOTS2_NO_POST=1
 
-# ── WOTS2-Zahlenwerte: MAX-PERFORMANCE-PRESET ───────────────────────────
-# Distanz-Baender (Kamera ~3.5u hinter Spieler):
-#   gezeichnet (MAX_DIST=16):        0 .. 12u Spieler-Distanz
-#   voll animiert (DRAW_SKIP=10):    0 ..  9u
-#   simuliert (SIM_DIST=15):         0 .. 14u
-#   Schwert gezeichnet (SWORD_DRAW=8): 0 .. 8u Kamera-Distanz
-#
-# Rollback-Beispiele:
-#   WOTS2_NPC_MAX_DIST=30     ./WOTS2.sh   # weniger Pop-in
-#   WOTS2_CHARA_DRAW_SKIP_DIST=20 ./WOTS2.sh
-#   WOTS2_CHARA_SHADOW_SKIP_DIST=12 ./WOTS2.sh
-#   WOTS2_NPC_SIM_DIST=28     ./WOTS2.sh
-#   WOTS2_SWORD_DRAW_DIST=999 ./WOTS2.sh   # Schwerter immer zeichnen
-#   WOTS2_LIGHTS_MAX=2        ./WOTS2.sh   # mehr Licht
-#   WOTS2_FX_SCALE=0.25       ./WOTS2.sh   # mehr Effekte
-#   WOTS2_NO_BLOOM=0          ./WOTS2.sh   # Bloom wieder an
+# ── WOTS2-PRESET ─────────────────────────────────────────────────────────
+# Entfernungen in Spieleinheiten. Die Kamera steht etwa 3,5 hinter dem Spieler, die
+# Zeichenreichweite in Spieler-Distanz ist also etwa MAX_DIST - 3,5.
+#   max       aggressiv: kuerzere Sicht, Schwerter ab 10 aus, kleine Schatten
+#   balanced  Standard: Fern-Modell ab 8, Ausblendung ab 11,5, Schwerter blenden mit
+#   quality   weit und hell: Original-LOD-Naehe 12, Sicht 24, 2 Lichter, mehr Effekte
+# SIM_DIST liegt bewusst knapp unter MAX_DIST: Alles, was gezeichnet wird, wird auch
+# simuliert, und NPCs starten ihre Bewegung ausserhalb des Bildes.
+# DRAW_SKIP=0 schaltet die Rest-Pose-Zone aus (dort stehen NPCs sonst unbewegt da).
+# SHADER_LRU 600 ist der Standard der README; 120 entlaedt Shader nach 4 s ohne Nutzung.
+WOTS2_PRESET="${WOTS2_PRESET:-balanced}"
+case "$WOTS2_PRESET" in
+    max)      P_LOD=6;  P_MAX=14; P_SIM=13; P_DRAWSKIP=0; P_SHADOWSKIP=3;  P_SWORD=10;  P_LIGHTS=1; P_FX=0.05; P_LRU=120; P_SHRES=64  ;;
+    quality)  P_LOD=12; P_MAX=24; P_SIM=23; P_DRAWSKIP=0; P_SHADOWSKIP=12; P_SWORD=999; P_LIGHTS=2; P_FX=0.25; P_LRU=600; P_SHRES=256 ;;
+    *)        WOTS2_PRESET=balanced
+              P_LOD=8;  P_MAX=16; P_SIM=15; P_DRAWSKIP=0; P_SHADOWSKIP=5;  P_SWORD=999; P_LIGHTS=1; P_FX=0.05; P_LRU=600; P_SHRES=128 ;;
+esac
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
-export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-120}"
-export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-0.05}" # Halbiert die Partikel-Menge!
+export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-$P_LRU}"
+export WOTS2_FX_SCALE="${WOTS2_FX_SCALE:-$P_FX}"
 export WOTS2_SPLASH="${WOTS2_SPLASH:-2.5}"
-export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-4}"
-export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-16}"
-export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-15}"
-export WOTS2_CHARA_DRAW_SKIP_DIST="${WOTS2_CHARA_DRAW_SKIP_DIST:-10}"
-export WOTS2_CHARA_SHADOW_SKIP_DIST="${WOTS2_CHARA_SHADOW_SKIP_DIST:-5}"
-export WOTS2_SWORD_DRAW_DIST="${WOTS2_SWORD_DRAW_DIST:-8}"
-export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-1}"
+export WOTS2_NPC_LOD_DIST="${WOTS2_NPC_LOD_DIST:-$P_LOD}"
+export WOTS2_NPC_MAX_DIST="${WOTS2_NPC_MAX_DIST:-$P_MAX}"
+export WOTS2_NPC_FADE_LEN="${WOTS2_NPC_FADE_LEN:-4}"
+export WOTS2_NPC_SIM_DIST="${WOTS2_NPC_SIM_DIST:-$P_SIM}"
+export WOTS2_CHARA_DRAW_SKIP_DIST="${WOTS2_CHARA_DRAW_SKIP_DIST:-$P_DRAWSKIP}"
+export WOTS2_CHARA_SHADOW_SKIP_DIST="${WOTS2_CHARA_SHADOW_SKIP_DIST:-$P_SHADOWSKIP}"
+export WOTS2_SWORD_DRAW_DIST="${WOTS2_SWORD_DRAW_DIST:-$P_SWORD}"
+export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-$P_LIGHTS}"
+export WOTS2_SHADOW_RES="${WOTS2_SHADOW_RES:-$P_SHRES}"
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -525,27 +605,53 @@ else
     log "  WOTS2_PERSISTENT_BUFFERS=(unset)  ->  aus (korrekt)"
 fi
 log ""
+log "Preset: $WOTS2_PRESET"
 log "Zahlenwerte:"
 log "  WOTS2_SHADOW_INTERVAL=$WOTS2_SHADOW_INTERVAL"
 log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
 log "  WOTS2_FX_SCALE=$WOTS2_FX_SCALE"
 log "  WOTS2_SPLASH=$WOTS2_SPLASH"
-log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST (derzeit wirkungslos)"
+log "  WOTS2_NPC_LOD_DIST=$WOTS2_NPC_LOD_DIST (Kamera-Distanz, Fern-Modell ab hier)"
 log "  WOTS2_NPC_MAX_DIST=$WOTS2_NPC_MAX_DIST (Kamera-Distanz)"
+log "  WOTS2_NPC_FADE_LEN=$WOTS2_NPC_FADE_LEN${WOTS2_NPC_FADE_END:+  WOTS2_NPC_FADE_END=$WOTS2_NPC_FADE_END}"
 log "  WOTS2_NPC_SIM_DIST=$WOTS2_NPC_SIM_DIST (Spieler-Distanz, 0 = aus)"
 log "  WOTS2_CHARA_DRAW_SKIP_DIST=$WOTS2_CHARA_DRAW_SKIP_DIST (Spieler-Distanz, 0 = aus)"
-log "  WOTS2_CHARA_SHADOW_SKIP_DIST=$WOTS2_CHARA_SHADOW_SKIP_DIST (Spieler-Distanz, 0 = aus)"
+log "  WOTS2_CHARA_SHADOW_SKIP_DIST=$WOTS2_CHARA_SHADOW_SKIP_DIST (Spieler-Distanz)"
 log "  WOTS2_SWORD_DRAW_DIST=$WOTS2_SWORD_DRAW_DIST (Kamera-Distanz, 999 = aus)"
 log "  WOTS2_LIGHTS_MAX=$WOTS2_LIGHTS_MAX"
+log "  WOTS2_SHADOW_RES=$WOTS2_SHADOW_RES"
+log "  MALLOC_MMAP_THRESHOLD_=$MALLOC_MMAP_THRESHOLD_  MALLOC_TRIM_THRESHOLD_=$MALLOC_TRIM_THRESHOLD_  MALLOC_TOP_PAD_=$MALLOC_TOP_PAD_"
 log "  SDL_AUDIO_SAMPLES=$SDL_AUDIO_SAMPLES"
 log ""
-log "Effektive Distanz-Bänder (Naeherung, Kamera ~3.5u hinter Spieler):"
-log "  gezeichnet (MAX_DIST):          0 .. ~$(( WOTS2_NPC_MAX_DIST - 4 ))u Spieler-Distanz"
-log "  voll animiert + beleuchtet:     0 .. $(( WOTS2_CHARA_DRAW_SKIP_DIST - 1 ))u"
-log "  nur Rest-Pose, kein Licht:      $WOTS2_CHARA_DRAW_SKIP_DIST .. $(( WOTS2_NPC_MAX_DIST - 4 ))u"
-log "  mit Schatten:                   0 .. $(( WOTS2_CHARA_SHADOW_SKIP_DIST - 1 ))u"
-log "  simuliert (SIM_DIST):           0 .. $(( WOTS2_NPC_SIM_DIST - 1 ))u"
-log "  Schwert gezeichnet:             0 .. $(( WOTS2_SWORD_DRAW_DIST - 1 ))u Kamera-Distanz"
+# Rechnen mit awk, damit auch Kommawerte (z. B. 16.5) funktionieren.
+w2_calc() { awk -v a="$1" -v b="$2" -v op="$3" 'BEGIN { if (op == "-") printf "%.1f", a - b; else printf "%.1f", a + b }' 2>/dev/null; }
+w2_lt()   { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }' 2>/dev/null; }
+W2_RANGE=$(w2_calc "$WOTS2_NPC_MAX_DIST" 3.5 -)
+W2_FADE_END="${WOTS2_NPC_FADE_END:-$(w2_calc "$WOTS2_NPC_MAX_DIST" 0.5 -)}"
+W2_FADE_START=$(w2_calc "$W2_FADE_END" "$WOTS2_NPC_FADE_LEN" -)
+log "Effektive Distanz-Baender (Naeherung, Kamera ~3.5u hinter Spieler):"
+log "  gezeichnet (MAX_DIST):          0 .. ~${W2_RANGE}u Spieler-Distanz"
+log "  Fern-Modell (LOD_DIST):         ab ${WOTS2_NPC_LOD_DIST}u Kamera-Distanz (Hysterese +-0.75)"
+log "  Ausblendung (Dither):           ${W2_FADE_START} .. ${W2_FADE_END}u Kamera-Distanz"
+if [ "${WOTS2_CHARA_DRAW_SKIP_DIST%%.*}" -gt 0 ] 2>/dev/null; then
+    log "  nur Rest-Pose, kein Licht:      ab ${WOTS2_CHARA_DRAW_SKIP_DIST}u Spieler-Distanz  (kann wie Pop-in wirken)"
+else
+    log "  Rest-Pose-Zone:                 aus"
+fi
+log "  mit Schatten:                   0 .. ${WOTS2_CHARA_SHADOW_SKIP_DIST}u"
+log "  simuliert (SIM_DIST):           0 .. ${WOTS2_NPC_SIM_DIST}u"
+if w2_lt "$WOTS2_SWORD_DRAW_DIST" 900; then
+    log "  Schwert gezeichnet:             0 .. ${WOTS2_SWORD_DRAW_DIST}u Kamera-Distanz"
+else
+    log "  Schwert gezeichnet:             immer (blendet mit der Figur aus)"
+fi
+if [ "${WOTS2_NPC_SIM_DIST%%.*}" -gt 0 ] 2>/dev/null && w2_lt "$WOTS2_NPC_SIM_DIST" "$(w2_calc "$W2_RANGE" 1 +)"; then
+    log "  WARNUNG: SIM_DIST ($WOTS2_NPC_SIM_DIST) liegt zu nah an der Zeichenreichweite (~$W2_RANGE):"
+    log "           NPCs wuerden gezeichnet, aber eingefroren sein. SIM_DIST sollte >= ~$(w2_calc "$W2_RANGE" 1.5 +) sein."
+fi
+if w2_lt "$WOTS2_NPC_MAX_DIST" "$WOTS2_NPC_LOD_DIST"; then
+    log "  WARNUNG: LOD_DIST ($WOTS2_NPC_LOD_DIST) liegt ueber MAX_DIST ($WOTS2_NPC_MAX_DIST): das Fern-Modell wird nie genutzt."
+fi
 
 log ""
 log "Bundle-Bibliotheken (libs.aarch64):"
@@ -779,7 +885,9 @@ kill_wots2_escalate() {
     return 0
 }
 
+HWMON_PID=""
 cleanup_all() {
+    [ -n "$HWMON_PID" ] && kill "$HWMON_PID" 2>/dev/null || true
     if [ -n "$GPTOKEYB_PID" ] && kill -0 "$GPTOKEYB_PID" 2>/dev/null; then
         kill -TERM "$GPTOKEYB_PID" 2>/dev/null || true
         sleep 0.3
@@ -808,6 +916,42 @@ trap on_signal TERM INT HUP
 ./wots2 extracted > "$WOTS2_STDOUT" 2> "$WOTS2_STDERR" &
 WOTS2_PID=$!
 log "PID=$WOTS2_PID"
+
+# Hoehere Prioritaet gegenueber Hintergrunddiensten (nur wenn erlaubt, nie fatal).
+W2_NICE="${WOTS2_NICE:--5}"
+if [ "$W2_NICE" != "0" ]; then
+    if [ "$(id -u)" = "0" ]; then
+        renice -n "$W2_NICE" -p "$WOTS2_PID" >/dev/null 2>&1 && log "Prioritaet: nice $W2_NICE" || log "renice fehlgeschlagen (ignoriert)"
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo -n renice -n "$W2_NICE" -p "$WOTS2_PID" >/dev/null 2>&1 && log "Prioritaet: nice $W2_NICE (sudo)" || log "renice fehlgeschlagen (ignoriert)"
+    else
+        log "renice nicht moeglich (kein root/sudo) - uebersprungen."
+    fi
+fi
+
+# Hardware-Monitor: Takte, GPU-Last, Temperatur alle N Sekunden. Zeigt, ob das Spiel
+# CPU- oder GPU-gebunden ist und ob die Hardware drosselt. Fast kostenlos (5 sysfs-Reads).
+HWMON_LOG="$GAMEDIR/wots2-hwmon.txt"
+if [ "${WOTS2_HWMON:-1}" = "1" ]; then
+    : > "$HWMON_LOG"
+    (
+        t0=$(date +%s)
+        rd() { cat "$1" 2>/dev/null || echo "-"; }
+        while kill -0 "$WOTS2_PID" 2>/dev/null; do
+            now=$(( $(date +%s) - t0 ))
+            cpu_khz=$(rd /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq)
+            temp=$(rd /sys/class/thermal/thermal_zone0/temp)
+            [ "$temp" != "-" ] && temp=$(( temp / 1000 ))
+            gpu_hz="-"; gpu_load="-"; dmc_hz="-"
+            [ -n "$gpu_devfreq_path" ] && { gpu_hz=$(rd "$gpu_devfreq_path/cur_freq"); gpu_load=$(rd "$gpu_devfreq_path/load"); }
+            [ -n "$dmc_devfreq_path" ] && dmc_hz=$(rd "$dmc_devfreq_path/cur_freq")
+            printf '%s cpu_khz=%s gpu_hz=%s gpu_load=%s dmc_hz=%s temp_c=%s\n' "$now" "$cpu_khz" "$gpu_hz" "$gpu_load" "$dmc_hz" "$temp"
+            sleep "${WOTS2_HWMON_INTERVAL:-10}"
+        done
+    ) >> "$HWMON_LOG" 2>/dev/null &
+    HWMON_PID=$!
+    log "Hardware-Monitor: $HWMON_LOG (alle ${WOTS2_HWMON_INTERVAL:-10} s)"
+fi
 
 WOTS2_STATUS=0
 while true; do
@@ -906,6 +1050,35 @@ if [ -s "$WOTS2_STDERR" ]; then
     grep -c "" "$WOTS2_STDERR" 2>/dev/null | { read -r n; log "  (stderr hat $n Zeilen insgesamt)"; }
 else
     log "wots2-stderr.txt ist leer."
+fi
+
+# ── Hardware-Zusammenfassung ─────────────────────────────────────────
+if [ -n "$HWMON_PID" ]; then
+    kill "$HWMON_PID" 2>/dev/null || true
+    wait "$HWMON_PID" 2>/dev/null || true
+    HWMON_PID=""
+    if [ -s "$HWMON_LOG" ]; then
+        log ""
+        log "Hardware waehrend des Laufs (aus wots2-hwmon.txt):"
+        awk '
+            { for (i = 2; i <= NF; i++) { split($i, kv, "="); v[kv[1]] = kv[2];
+                if (v[kv[1]] ~ /^[0-9]+(@.*)?$/) { n = v[kv[1]]; sub(/@.*/, "", n); n += 0;
+                    if (!(kv[1] in mn) || n < mn[kv[1]]) mn[kv[1]] = n;
+                    if (!(kv[1] in mx) || n > mx[kv[1]]) mx[kv[1]] = n; sum[kv[1]] += n; cnt[kv[1]]++ } } }
+            END { for (k in mn) printf "  %-9s min=%s  max=%s  mittel=%.0f\n", k, mn[k], mx[k], sum[k] / cnt[k] }
+        ' "$HWMON_LOG" 2>/dev/null | sort | log_pipe
+        if awk '/cpu_khz=/ { split($2, a, "="); if (a[2] + 0 > 0 && a[2] + 0 < 1000000) low = 1 } END { exit !low }' "$HWMON_LOG" 2>/dev/null; then
+            log "  Hinweis: Die CPU lief zeitweise unter 1 GHz - moegliche Drosselung (Temperatur oder Akku)."
+        fi
+    fi
+fi
+if [ -s "$WOTS2_STDOUT" ]; then
+    GCOUNT_LINES=$(grep -c '^\[gcount\]' "$WOTS2_STDOUT" 2>/dev/null || true)
+    if [ "${GCOUNT_LINES:-0}" -gt 0 ]; then
+        log ""
+        log "Letzte 5 [gcount]-Zeilen (Begin3D-Paare, Schnellpfad, echte 2D-Wechsel):"
+        grep '^\[gcount\]' "$WOTS2_STDOUT" | tail -5 | log_pipe
+    fi
 fi
 
 log_section "ENDE"
