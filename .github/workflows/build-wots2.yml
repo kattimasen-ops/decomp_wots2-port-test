@@ -1,4 +1,4 @@
-name: craft WOTS2 for RK3326
+name: Build WOTS2 for RK3326
 
 on:
   workflow_dispatch:
@@ -374,7 +374,13 @@ jobs:
 
           # --- Hardware-Optimierungen und Figuren-Ausblendung (Mali-G31) ---
 
-          apply wots2-gs-lazy-blit.py src/hal/gs.cpp
+          # DEAKTIVIERT: wots2-gs-lazy-blit.py. Es verschiebt die Vollbild-Kopie nach read_frame(), aber
+
+          # wots2-gs-invalidate.py macht s_fbo nach end_frame() ungueltig. Effect.Monotone Modus 6
+
+          # (Standbild unter der Erzaehlung, z. B. nach dem ersten Kampf) bekam ein SCHWARZES Bild.
+
+          # apply wots2-gs-lazy-blit.py src/hal/gs.cpp
 
           # lazy-state MUSS vor backface-cull laufen (prueft state_3d/state_2d streng)
 
