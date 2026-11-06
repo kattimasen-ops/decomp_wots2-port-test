@@ -50,6 +50,7 @@
 #   WOTS2_KILL_TIMEOUT=N            Sekunden bis SIGKILL (Default: 3)
 #
 # ── Launcher-Schalter ────────────────────────────────────────────────────
+#   WOTS2_OFF=a,b,c / WOTS2_SAFE=1  einzelne Funktionen abschalten (Fehlersuche, siehe unten)
 #   WOTS2_ANALYSE=0/1               Timing-Logs ([timing], [gtiming], [perf] ...)
 #                                   an/aus (Default: 1). Zum Spielen auf 0 setzen.
 #   WOTS2_LIBDIAG=0/1               LD_DEBUG-Probe, startet das Spiel 5 s vorab (Default: 0)
@@ -540,16 +541,18 @@ export WOTS2_NO_SHIMMER=1
 #   max       aggressiv: kuerzere Sicht, Schwerter ab 10 aus, kleine Schatten
 #   balanced  Standard: Fern-Modell ab 8, Ausblendung ab 11,5, Schwerter blenden mit
 #   quality   weit und hell: Original-LOD-Naehe 12, Sicht 24, 2 Lichter, mehr Effekte
-# SIM_DIST liegt bewusst knapp unter MAX_DIST: Alles, was gezeichnet wird, wird auch
-# simuliert, und NPCs starten ihre Bewegung ausserhalb des Bildes.
+# SIM_DIST ist in allen Presets AUS (0). Der Patch friert NPCs ab einer Spieler-Distanz
+# ein; Skript-Szenen (zum Beispiel das Opening) warten aber auf ihre NPCs und koennen
+# dann haengen bleiben (schwarzes Bild, Ton laeuft). Gespart wird nur 0,4 bis 2 ms pro Frame.
+# Wer ihn trotzdem will: WOTS2_NPC_SIM_DIST=15 (muss ueber MAX_DIST - 3.5 liegen).
 # DRAW_SKIP=0 schaltet die Rest-Pose-Zone aus (dort stehen NPCs sonst unbewegt da).
 # SHADER_LRU 600 ist der Standard der README; 120 entlaedt Shader nach 4 s ohne Nutzung.
 WOTS2_PRESET="${WOTS2_PRESET:-balanced}"
 case "$WOTS2_PRESET" in
-    max)      P_LOD=6;  P_MAX=14; P_SIM=13; P_DRAWSKIP=0; P_SHADOWSKIP=3;  P_SWORD=10;  P_LIGHTS=1; P_FX=0.05; P_LRU=120; P_SHRES=64  ;;
-    quality)  P_LOD=12; P_MAX=24; P_SIM=23; P_DRAWSKIP=0; P_SHADOWSKIP=12; P_SWORD=999; P_LIGHTS=2; P_FX=0.25; P_LRU=600; P_SHRES=256 ;;
+    max)      P_LOD=6;  P_MAX=14; P_SIM=0;  P_DRAWSKIP=0; P_SHADOWSKIP=3;  P_SWORD=10;  P_LIGHTS=1; P_FX=0.05; P_LRU=120; P_SHRES=64  ;;
+    quality)  P_LOD=12; P_MAX=24; P_SIM=0;  P_DRAWSKIP=0; P_SHADOWSKIP=12; P_SWORD=999; P_LIGHTS=2; P_FX=0.25; P_LRU=600; P_SHRES=256 ;;
     *)        WOTS2_PRESET=balanced
-              P_LOD=8;  P_MAX=16; P_SIM=15; P_DRAWSKIP=0; P_SHADOWSKIP=5;  P_SWORD=999; P_LIGHTS=1; P_FX=0.05; P_LRU=600; P_SHRES=128 ;;
+              P_LOD=8;  P_MAX=16; P_SIM=0;  P_DRAWSKIP=0; P_SHADOWSKIP=5;  P_SWORD=999; P_LIGHTS=1; P_FX=0.05; P_LRU=600; P_SHRES=128 ;;
 esac
 export WOTS2_SHADOW_INTERVAL="${WOTS2_SHADOW_INTERVAL:-1}"
 export WOTS2_SHADER_LRU="${WOTS2_SHADER_LRU:-$P_LRU}"
@@ -564,6 +567,30 @@ export WOTS2_CHARA_SHADOW_SKIP_DIST="${WOTS2_CHARA_SHADOW_SKIP_DIST:-$P_SHADOWSK
 export WOTS2_SWORD_DRAW_DIST="${WOTS2_SWORD_DRAW_DIST:-$P_SWORD}"
 export WOTS2_LIGHTS_MAX="${WOTS2_LIGHTS_MAX:-$P_LIGHTS}"
 export WOTS2_SHADOW_RES="${WOTS2_SHADOW_RES:-$P_SHRES}"
+
+# Verzoegerte Vollbild-Kopie (wots2-gs-lazy-blit) AUS: Zusammen mit wots2-gs-invalidate lieferte
+# sie ein schwarzes Standbild in Effect.Monotone Modus 6 (nach dem ersten Kampf: Bild schwarz,
+# Ton laeuft weiter, keine Steuerung). Wirkt auch bei einem schon gebauten Binary.
+export WOTS2_NO_LAZYBLIT="${WOTS2_NO_LAZYBLIT:-1}"
+
+# ── Fehlersuche: einzelne Funktionen abschalten ──────────────────────────
+#   WOTS2_OFF=sim,maxdist,fade,lod,lazystate,lazyblit,texcache,cansee,shadow   (Komma-Liste)
+#   WOTS2_OFF=all  oder  WOTS2_SAFE=1   schaltet alle diese Funktionen ab
+#   (lazyblit ist ohnehin immer aus: das Binary liest nur, ob die Variable gesetzt ist)
+# Beispiel: WOTS2_OFF=maxdist,fade ./WOTS2.sh  (die Ausblendung braucht MAX_DIST)
+W2_OFF=",${WOTS2_OFF:-},"
+[ "${WOTS2_SAFE:-0}" = "1" ] && W2_OFF=",all,"
+w2_off() { case "$W2_OFF" in *",all,"*|*",$1,"*) return 0 ;; esac; return 1; }
+W2_OFF_LIST=""
+w2_off sim       && { export WOTS2_NPC_SIM_DIST=0;      W2_OFF_LIST="$W2_OFF_LIST sim"; }
+w2_off maxdist   && { export WOTS2_NPC_MAX_DIST=0;      W2_OFF_LIST="$W2_OFF_LIST maxdist"; }
+w2_off fade      && { export WOTS2_NO_NPC_FADE=1;       W2_OFF_LIST="$W2_OFF_LIST fade"; }
+w2_off lod       && { export WOTS2_NPC_LOD_DIST=12;     W2_OFF_LIST="$W2_OFF_LIST lod"; }
+w2_off lazystate && { export WOTS2_NO_LAZYSTATE=1;      W2_OFF_LIST="$W2_OFF_LIST lazystate"; }
+w2_off lazyblit  && { export WOTS2_NO_LAZYBLIT=1;       W2_OFF_LIST="$W2_OFF_LIST lazyblit"; }
+w2_off texcache  && { export WOTS2_NO_TEXCACHE=1;       W2_OFF_LIST="$W2_OFF_LIST texcache"; }
+w2_off cansee    && { export WOTS2_NO_CANSEE_CACHE=1;   W2_OFF_LIST="$W2_OFF_LIST cansee"; }
+w2_off shadow    && { export WOTS2_NO_SHADOW=1;         W2_OFF_LIST="$W2_OFF_LIST shadow"; }
 
 # ── BINARY-CHECK ─────────────────────────────────────────────────────
 if [ ! -x ./wots2 ]; then
@@ -606,6 +633,7 @@ else
 fi
 log ""
 log "Preset: $WOTS2_PRESET"
+[ -n "$W2_OFF_LIST" ] && log "ABGESCHALTET (WOTS2_OFF/WOTS2_SAFE):$W2_OFF_LIST"
 log "Zahlenwerte:"
 log "  WOTS2_SHADOW_INTERVAL=$WOTS2_SHADOW_INTERVAL"
 log "  WOTS2_SHADER_LRU=$WOTS2_SHADER_LRU"
@@ -639,7 +667,11 @@ else
     log "  Rest-Pose-Zone:                 aus"
 fi
 log "  mit Schatten:                   0 .. ${WOTS2_CHARA_SHADOW_SKIP_DIST}u"
-log "  simuliert (SIM_DIST):           0 .. ${WOTS2_NPC_SIM_DIST}u"
+if [ "${WOTS2_NPC_SIM_DIST%%.*}" -gt 0 ] 2>/dev/null; then
+    log "  simuliert (SIM_DIST):           0 .. ${WOTS2_NPC_SIM_DIST}u"
+else
+    log "  simuliert:                      alle NPCs (SIM_DIST aus)"
+fi
 if w2_lt "$WOTS2_SWORD_DRAW_DIST" 900; then
     log "  Schwert gezeichnet:             0 .. ${WOTS2_SWORD_DRAW_DIST}u Kamera-Distanz"
 else
@@ -1050,6 +1082,18 @@ if [ -s "$WOTS2_STDERR" ]; then
     grep -c "" "$WOTS2_STDERR" 2>/dev/null | { read -r n; log "  (stderr hat $n Zeilen insgesamt)"; }
 else
     log "wots2-stderr.txt ist leer."
+fi
+
+# ── Letzte Spiel-Ereignisse und Einfrier-Erkennung ──────────────────────
+if [ -s "$WOTS2_STDOUT" ]; then
+    log ""
+    log "Letzte Spiel-Ereignisse (ohne Timing-Zeilen):"
+    grep -vE '^\[(mtiming|timing|gtiming|atiming|perf|gcount)\]|^\[sprites\]|^\[sound\]|^$' "$WOTS2_STDOUT" 2>/dev/null | tail -8 | log_pipe
+    # Bleibt draw/cull ueber viele [perf]-Zeilen gleich, steht die Szene (Hänger oder Ereignis-Wartezustand).
+    grep '^\[perf\]' "$WOTS2_STDOUT" 2>/dev/null | awk '
+        { if (match($0, /draw\/cull [0-9]+\/[0-9]+/)) { k = substr($0, RSTART, RLENGTH); fr = $3; sub(":", "", fr)
+            if (k == last) { n++ } else { n = 1; last = k; start = fr } } }
+        END { if (n >= 8) printf "  Hinweis: %s blieb %d Messpunkte lang gleich (ab Frame %s): Szene eingefroren oder wartet auf ein Ereignis.\n", last, n, start }' | log_pipe
 fi
 
 # ── Hardware-Zusammenfassung ─────────────────────────────────────────
