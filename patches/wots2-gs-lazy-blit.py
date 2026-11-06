@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
 """
-patches/wots2-gs-lazy-blit.py   (v1)
+patches/wots2-gs-lazy-blit.py   (v1.1)  --  NICHT EMPFOHLEN, in der .yml deaktiviert
 
-Spart pro Frame eine Vollbild-Kopie in src/hal/gs.cpp.
+ACHTUNG, bekannter Konflikt: Dieser Patch geht davon aus, dass s_fbo nach
+end_frame() das fertige Bild behaelt. Das stimmt nicht, sobald
+wots2-gs-invalidate.py am Ende von end_frame() glInvalidateFramebuffer auf
+s_fbo aufruft: Danach ist der Inhalt undefiniert (auf der Mali-G31 meist
+schwarz). Die verzoegerte Kopie in read_frame() liefert dann ein schwarzes Bild.
 
-end_frame() kopiert nach jedem Frame das fertige Bild per glBlitFramebuffer
-in einen zweiten Framebuffer (s_lastFbo). Gebraucht wird diese Kopie nur von
-read_frame() und damit nur von Mono_Keep (hle.cpp:1271), einem seltenen
-Effekt. Auf einer Tile-basierten Mali-GPU bedeutet die Kopie jedes Mal einen
-Render-Pass-Abschluss samt Lesen und Schreiben des ganzen Bildes.
+Folge im Spiel: read_frame() wird von Effect.Monotone Modus 6 aufgerufen (hle.cpp,
+Mono_Keep: das Standbild unter der Erzaehlung, zum Beispiel nach dem ersten Kampf).
+Das Standbild ist dann schwarz, der Ton laeuft weiter, das Bild bleibt schwarz.
 
-Neu: Die Kopie entsteht erst in read_frame(). Das ist gleichwertig, weil s_fbo
-nach end_frame() das fertige Bild behaelt, bis play() im naechsten Frame mit
-FrameBegin loescht; read_frame() wird vom Spiel dazwischen aufgerufen (im
-Update, vor dem naechsten play()).
+Der Patch prueft deshalb jetzt, ob end_frame() eine Invalidierung enthaelt, und
+wendet sich in dem Fall NICHT an (PATCH-FEHLER). Zur Laufzeit stellt
+WOTS2_NO_LAZYBLIT=1 das Original-Verhalten wieder her (Kopie in end_frame()).
+
+Was der Patch macht (wenn er angewendet wird)
+---------------------------------------------
+end_frame() kopiert nach jedem Frame das fertige Bild per glBlitFramebuffer in
+s_lastFbo. Gebraucht wird die Kopie nur von read_frame(). Der Patch verschiebt
+die Kopie in read_frame(). Ersparnis: eine Vollbild-Kopie pro Frame, geschaetzt
+1-2 ms; gemessen ist das nicht.
 
   * wots2_keep_frame(): der unveraenderte Original-Block (Anlegen + Blit).
   * end_frame():        ruft ihn nur noch mit WOTS2_NO_LAZYBLIT=1 auf.
-  * read_frame():       ruft ihn selbst auf (wenn schon ein Frame fertig ist),
-                        NACH dem Sichern der Framebuffer-Bindung, damit die
-                        Bindung danach wie vorher wiederhergestellt wird.
-
-Notausschalter: WOTS2_NO_LAZYBLIT=1 (Originalverhalten).
+  * read_frame():       ruft ihn selbst auf, NACH dem Sichern der Bindung.
 
 Idempotent: Marker 'wots2_gs_lazy_blit_v1'.
 Zieldatei: src/hal/gs.cpp
@@ -92,6 +96,11 @@ def patch(path):
         return
     es, eb, ee = he
     body = t[eb:ee]
+    if re.search(r'nvalidate', body):
+        pl.fail('end_frame() invalidiert Framebuffer (wots2-gs-invalidate.py): s_fbo ist danach nicht mehr '
+                'lesbar, die verzoegerte Kopie waere schwarz (Standbild in Effect.Monotone Modus 6). '
+                'Lazy-Blit wird NICHT angewendet.')
+        return
     ms = list(re.finditer(pl.flex(KEEP_BLOCK), body))
     if len(ms) != 1:
         pl.fail('end_frame: Blit-Block %d Treffer statt genau 1 (hat ein anderer Patch ihn geaendert?)' % len(ms))
