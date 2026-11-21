@@ -7,6 +7,10 @@ on:
         description: 'Build abbrechen, wenn ein Patch nichts aendert oder sein Muster nicht findet'
         type: boolean
         default: false
+      skip_patches:
+        description: 'Patches ueberspringen (Komma-Liste, z. B. wots2-chara-mgr-find-cache.py,wots2-collision-cache.py), zur Fehlersuche'
+        type: string
+        default: ''
   push:
     branches: [ main, master ]
     paths-ignore:
@@ -190,6 +194,7 @@ jobs:
       - name: Patches anwenden
         env:
           WOTS2_PATCH_STRICT: ${{ (github.event_name == 'workflow_dispatch' && inputs.strict_patches) && '1' || '0' }}
+          WOTS2_SKIP_PATCHES: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_patches || '' }}
         run: |
           set -euo pipefail
 
@@ -217,6 +222,13 @@ jobs:
           # wenn es fehlt oder nichts veraendert hat.
           apply() {
             local name="$1" target="$2" S h1 h2 rc
+            if [ -n "${WOTS2_SKIP_PATCHES:-}" ]; then
+              case ",${WOTS2_SKIP_PATCHES// /}," in
+                *",$name,"*|*",${name%.py},"*)
+                  echo "== patches/$name == UEBERSPRUNGEN (skip_patches)" | tee -a patch.log
+                  return 0 ;;
+              esac
+            fi
             S=$(find_script "$name")
             if [ -z "$S" ]; then
               echo "PATCH-WARNUNG: $name FEHLT (weder in patches/ noch im Repo-Root)" | tee -a patch.log
@@ -387,6 +399,10 @@ jobs:
           apply wots2-gs-lazy-state.py src/hal/gs.cpp
 
           apply wots2-gs-npc-fade.py src/hal/gs.cpp
+
+          # Diagnose fuer den schwarzen Bildschirm (nur aktiv mit WOTS2_GDBG=1, sonst ein Vergleich pro Frame)
+
+          apply wots2-gs-gdbg.py src/hal/gs.cpp
 
           apply wots2-gs-backface-cull.py src/hal/gs.cpp
 
