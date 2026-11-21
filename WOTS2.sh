@@ -510,6 +510,11 @@ wots2_export_flag WOTS2_PAD_DIAG    0
 wots2_export_flag WOTS2_SHADER_CACHE 1
 wots2_export_flag WOTS2_TIMING      "${WOTS2_ANALYSE:-1}"
 wots2_export_flag WOTS2_ATIMING     "${WOTS2_ANALYSE:-1}"
+# Diagnose fuer schwarzen Bildschirm / eingefrorene Szene (Patch wots2-gs-gdbg): schreibt
+# [gdbg]-Zeilen und Bilder nach shots/ (hoechstens 8 pro Lauf). Alte Bilder werden geloescht.
+wots2_export_flag WOTS2_GDBG        "${WOTS2_ANALYSE:-1}"
+export WOTS2_SHOT_DIR="$GAMEDIR/shots"
+mkdir -p "$WOTS2_SHOT_DIR" 2>/dev/null && rm -f "$WOTS2_SHOT_DIR"/shot_*.png 2>/dev/null
 wots2_export_flag WOTS2_NO_BLOOM    1
 unset WOTS2_PERSISTENT_BUFFERS
 
@@ -1094,6 +1099,21 @@ if [ -s "$WOTS2_STDOUT" ]; then
         { if (match($0, /draw\/cull [0-9]+\/[0-9]+/)) { k = substr($0, RSTART, RLENGTH); fr = $3; sub(":", "", fr)
             if (k == last) { n++ } else { n = 1; last = k; start = fr } } }
         END { if (n >= 8) printf "  Hinweis: %s blieb %d Messpunkte lang gleich (ab Frame %s): Szene eingefroren oder wartet auf ein Ereignis.\n", last, n, start }' | log_pipe
+fi
+
+# ── Diagnose-Ausgabe des Patches wots2-gs-gdbg ───────────────────────
+if [ -s "$WOTS2_STDOUT" ]; then
+    GDBG_LINES=$(grep -c '^\[gdbg\]' "$WOTS2_STDOUT" 2>/dev/null || true)
+    if [ "${GDBG_LINES:-0}" -gt 0 ]; then
+        log ""
+        log "[gdbg]-Zeilen (dunkles Bild, eingefrorene Szene, read_frame), letzte 8 von $GDBG_LINES:"
+        grep '^\[gdbg\]' "$WOTS2_STDOUT" | tail -8 | cut -c1-420 | log_pipe
+    fi
+fi
+if ls "$WOTS2_SHOT_DIR"/shot_*.png >/dev/null 2>&1; then
+    log ""
+    log "Bilder in $WOTS2_SHOT_DIR:"
+    ls -la "$WOTS2_SHOT_DIR"/shot_*.png 2>/dev/null | log_pipe
 fi
 
 # ── Hardware-Zusammenfassung ─────────────────────────────────────────
